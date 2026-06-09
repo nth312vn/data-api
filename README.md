@@ -7,7 +7,7 @@ Production-oriented FastAPI backend scaffold with layered architecture, PostgreS
 The codebase is intentionally modular while keeping the domain model simple.
 
 - `app/api`: HTTP routing only. Routes validate request/response shape and delegate to services.
-- `app/services`: business workflows and transaction decisions. This is where registration, login, profile updates, and account deletion rules live.
+- `app/services`: business workflows and transaction decisions. This is where login, user management, profile updates, and account deletion rules live.
 - `app/repositories`: persistence contracts plus SQLAlchemy implementations. Services depend on interfaces, not ORM details.
 - `app/infrastructure`: external systems such as database sessions and unit of work.
 - `app/core`: shared config, security, logging, and exception handling.
@@ -26,7 +26,7 @@ Flow:
 
 1. A client calls a route such as `GET /api/v1/data/users`.
 2. The service builds the Trino SQL internally from fixed route config.
-3. The service collects route-owned PII token fields such as `email_token`.
+3. The service collects route-owned PII token fields such as `customer_id`.
 4. It resolves mappings from the in-memory cache first.
 5. Cache misses are loaded from the separate PII mapping database.
 6. The PII database can contain many mapping tables with different schemas, modeled in `app/pii_models`.
@@ -39,22 +39,46 @@ curl "http://localhost:8000/api/v1/data/users?limit=100&offset=0" \
   -H "Authorization: Bearer <access_token>"
 ```
 
+Power BI deeplink routes:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/power_bi/deeplink_1 \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_date": "2026-06-01",
+    "end_date": "2026-06-02",
+    "limit": 1000,
+    "customer_id": ["VNH001", "VNH002"]
+  }'
+```
+
+```bash
+curl -X POST http://localhost:8000/api/v1/power_bi/deeplink_2 \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_date": "2026-06-01",
+    "end_date": "2026-06-02",
+    "limit": 1000,
+    "customer_id": ["VNH001", "VNH002"]
+  }'
+```
+
 Each PII source declares its own table and columns as a model class. These
 models describe existing tables in the independent PII database; they are not
 part of the main application Alembic migrations.
 
 ```python
-class EmailPiiMapping(PiiMappingModelMixin, PiiBase):
-    __tablename__ = "pii_email_lookup"
+class CustomerIdentityPiiMapping(PiiMappingModelMixin, PiiBase):
+    __tablename__ = "customer_identity_map"
 
-    __pii_type__ = "email_token"
-    __pii_token_attr__ = "email_hash"
-    __pii_value_attr__ = "email_address"
-    __pii_source_attr__ = "system_code"
+    __pii_type__ = "customer_id"
+    __pii_token_attr__ = "customer_id"
+    __pii_value_attr__ = "uuid"
 
-    email_hash: Mapped[str] = mapped_column(String(512), primary_key=True)
-    system_code: Mapped[str] = mapped_column(String(64), primary_key=True)
-    email_address: Mapped[str] = mapped_column(String(320), nullable=False)
+    customer_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    uuid: Mapped[str] = mapped_column(CHAR(36), nullable=False)
 ```
 
 ## Quick Start
@@ -97,24 +121,17 @@ Important variables:
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: short-lived access token lifetime.
 - `REFRESH_TOKEN_EXPIRE_MINUTES`: refresh token lifetime.
 - `CORS_ORIGINS`: comma-separated allowed origins.
-- `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_HTTP_SCHEME`: Trino connection settings.
-- `TRINO_CATALOG`, `TRINO_SCHEMA`, `TRINO_USERS_TABLE`: Trino namespace and table name used when building route-owned queries.
+- `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_PASSWORD`, `TRINO_HTTP_SCHEME`: Trino connection settings.
 - `PII_MAPPING_CACHE_MAX_SIZE`: maximum number of mapping entries held in process memory.
+
+Trino queries run through the SQLAlchemy dialect provided by `trino[sqlalchemy]`.
 
 ## API Examples
 
-Register:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "username": "exampleuser",
-    "password": "a-very-secure-password",
-    "full_name": "Example User"
-  }'
-```
+On startup, the Docker entrypoint runs the initial admin script after migrations.
+The script only creates or promotes an admin when the `users` table has no
+`role=admin` user. It uses `admin@example.com` / `admin` and prints a generated
+temporary password in the startup log.
 
 Login:
 
@@ -122,9 +139,41 @@ Login:
 curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "user@example.com",
-    "password": "a-very-secure-password"
+    "email": "admin@example.com",
+    "password": "<temporary_password_from_startup_log>"
   }'
+```
+
+Create user as admin:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/users \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "username": "exampleuser",
+    "password": "a-very-secure-password",
+    "full_name": "Example User",
+    "role": "user",
+    "is_active": true
+  }'
+```
+
+Update user as admin:
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/users/<user_id> \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "admin", "is_active": true}'
+```
+
+Delete user as admin:
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/users/<user_id> \
+  -H "Authorization: Bearer <admin_access_token>"
 ```
 
 Get current user:

@@ -13,7 +13,7 @@ dependencies = [
     "pydantic-settings>=2.3.4",
     "pyjwt>=2.8.0",
     "sqlalchemy[asyncio]>=2.0.31",
-    "trino>=0.329.0",
+    "trino[sqlalchemy]>=0.329.0",
     "uvicorn[standard]>=0.30.1",
 ]
 

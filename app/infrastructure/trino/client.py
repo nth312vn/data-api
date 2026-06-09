@@ -1,9 +1,12 @@
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
-from importlib import import_module
 from threading import Lock
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
+from sqlalchemy.sql import Executable
 
 from app.core.config import Settings
 from app.utils.sql import quote_identifier_path
@@ -18,7 +21,7 @@ class TrinoColumn:
 
 
 class TrinoClient(Protocol):
-    async def execute(self, sql: str) -> list[dict[str, Any]]: ...
+    async def execute(self, statement: str | Executable) -> list[dict[str, Any]]: ...
 
     async def get_catalogs(self) -> list[str]: ...
 
@@ -35,20 +38,20 @@ class TrinoClient(Protocol):
     ) -> list[TrinoColumn]: ...
 
 
-class DbApiTrinoClient:
+class TrinoPythonClient:
     def __init__(
         self,
         *,
         settings: Settings,
-        connect_factory: Callable[..., Any] | None = None,
+        engine_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.settings = settings
-        self._connect_factory = connect_factory
-        self._connection: Any | None = None
-        self._connection_lock = Lock()
+        self._engine_factory = engine_factory
+        self._engine: Any | None = None
+        self._engine_lock = Lock()
 
-    async def execute(self, sql: str) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._execute_sync, sql)
+    async def execute(self, statement: str | Executable) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._execute_sync, statement)
 
     async def get_catalogs(self) -> list[str]:
         rows = await self.execute("SHOW CATALOGS")
@@ -86,55 +89,63 @@ class DbApiTrinoClient:
     async def close(self) -> None:
         await asyncio.to_thread(self._close_sync)
 
-    def _execute_sync(self, sql: str) -> list[dict[str, Any]]:
-        with self._connection_lock:
-            connection = self._get_connection()
-            cursor = connection.cursor()
-            try:
-                cursor.execute(sql)
-                columns = self._column_names(cursor.description)
-                rows = cursor.fetchall()
-                return [dict(zip(columns, row, strict=True)) for row in rows]
-            except Exception:
-                self._close_connection(connection)
-                self._connection = None
-                raise
-            finally:
-                close_cursor = getattr(cursor, "close", None)
-                if close_cursor is not None:
-                    close_cursor()
+    def _execute_sync(self, statement: str | Executable) -> list[dict[str, Any]]:
+        engine = self._get_engine()
+        try:
+            with engine.connect() as connection:
+                executable = (
+                    text(statement) if isinstance(statement, str) else statement
+                )
+                result = connection.execute(executable)
+                return [dict(row) for row in result.mappings().all()]
+        except Exception:
+            self._dispose_engine(engine)
+            raise
 
-    def _get_connection(self) -> Any:
-        if self._connection is None:
-            self._connection = self._connect(
-                host=self.settings.trino_host,
-                port=self.settings.trino_port,
-                user=self.settings.trino_user,
-                http_scheme=self.settings.trino_http_scheme,
-            )
-        return self._connection
+    def _get_engine(self) -> Any:
+        with self._engine_lock:
+            if self._engine is None:
+                self._engine = self._create_engine()
+            return self._engine
 
-    def _connect(self, **kwargs: Any) -> Any:
-        connect = self._connect_factory
-        if connect is None:
-            connect = cast(Callable[..., Any], import_module("trino.dbapi").connect)
-        return connect(**kwargs)
+    def _create_engine(self) -> Any:
+        factory = self._engine_factory
+        if factory is None:
+            factory = create_engine
+        return factory(
+            self._trino_url(),
+            connect_args={
+                "http_scheme": self.settings.trino_http_scheme,
+            },
+        )
+
+    def _trino_url(self) -> URL:
+        password = None
+        if self.settings.trino_password is not None:
+            password_value = self.settings.trino_password.get_secret_value()
+            if password_value:
+                password = password_value
+        return URL.create(
+            "trino",
+            username=self.settings.trino_user,
+            password=password,
+            host=self.settings.trino_host,
+            port=self.settings.trino_port,
+        )
+
+    def _dispose_engine(self, engine: Any) -> None:
+        with self._engine_lock:
+            if self._engine is engine:
+                self._engine = None
+        engine.dispose()
 
     def _close_sync(self) -> None:
-        with self._connection_lock:
-            if self._connection is None:
+        with self._engine_lock:
+            if self._engine is None:
                 return
-            connection = self._connection
-            self._connection = None
-            self._close_connection(connection)
-
-    def _close_connection(self, connection: Any) -> None:
-        connection.close()
-
-    def _column_names(self, description: Sequence[Sequence[Any]] | None) -> list[str]:
-        if description is None:
-            return []
-        return [str(column[0]) for column in description]
+            engine = self._engine
+            self._engine = None
+        engine.dispose()
 
     def _first_column_values(self, rows: list[dict[str, Any]]) -> list[str]:
         values: list[str] = []

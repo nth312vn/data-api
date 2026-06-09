@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import User
+from app.models.user import User, UserRole
 
 
 class SQLAlchemyUserRepository:
@@ -31,6 +31,11 @@ class SQLAlchemyUserRepository:
         username: str,
     ) -> User | None:
         stmt = select(User).where(User.username == username.lower())
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_admin_user(self) -> User | None:
+        stmt = select(User).where(User.role == UserRole.admin).limit(1)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 

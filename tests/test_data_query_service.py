@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from app.infrastructure.trino import TrinoColumn
 from app.models.audit_log import AuditLog
 from app.models.user import User, UserRole
 from app.repositories.interfaces.pii_mapping import PiiMappingKey, PiiMappingRecord
+from app.schemas.power_bi import PowerBiDeeplinkRequest
 from app.services.data_query import DataQueryService
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 
@@ -15,10 +17,15 @@ from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 class FakeTrinoClient:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
+        self.statement: Any | None = None
         self.sql: str | None = None
+        self.params: dict[str, Any] = {}
 
-    async def execute(self, sql: str) -> list[dict[str, Any]]:
-        self.sql = sql
+    async def execute(self, statement: Any) -> list[dict[str, Any]]:
+        self.statement = statement
+        self.sql = str(statement)
+        if hasattr(statement, "compile"):
+            self.params = statement.compile().params
         return self.rows
 
     async def get_catalogs(self) -> list[str]:
@@ -91,31 +98,33 @@ def make_user() -> User:
     )
 
 
+def test_power_bi_request_normalizes_customer_ids() -> None:
+    request = PowerBiDeeplinkRequest(customer_id=["VNH001,VNH002", " VNH003 "])
+
+    assert request.customer_id == ["VNH001", "VNH002", "VNH003"]
+
+
 @pytest.mark.asyncio
 async def test_query_maps_pii_from_cache_and_database() -> None:
-    cached_email_key = PiiMappingKey("trino", "email_token", "tok-1")
-    cached_phone_key = PiiMappingKey("trino", "phone_token", "phone-1")
-    db_email_key = PiiMappingKey("trino", "email_token", "tok-2")
-    db_phone_key = PiiMappingKey("trino", "phone_token", "phone-2")
+    cached_customer_key = PiiMappingKey("trino", "customer_id", "customer-1")
+    db_customer_key = PiiMappingKey("trino", "customer_id", "customer-2")
     cache = InMemoryPiiMappingCache(max_size=10)
     cache.set_many(
         {
-            cached_email_key: "user-1@example.com",
-            cached_phone_key: "+84900000001",
+            cached_customer_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
         },
     )
     mapping_repo = FakePiiMappingRepository(
         {
-            db_email_key: "user-2@example.com",
-            db_phone_key: "+84900000002",
+            db_customer_key: "adf349fb-bbfc-4102-96a1-65af0b063389",
         },
     )
     audit_repo = FakeAuditLogRepository()
     uow = FakeUnitOfWork()
     trino = FakeTrinoClient(
         [
-            {"email_token": "tok-1", "phone_token": "phone-1", "amount": 100},
-            {"email_token": "tok-2", "phone_token": "phone-2", "amount": 200},
+            {"customer_id": "customer-1", "amount": 100},
+            {"customer_id": "customer-2", "amount": 200},
         ],
     )
     service = DataQueryService(
@@ -135,18 +144,16 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
 
     assert response.rows == [
         {
-            "email_token": "user-1@example.com",
-            "phone_token": "+84900000001",
+            "customer_id": "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
             "amount": 100,
         },
         {
-            "email_token": "user-2@example.com",
-            "phone_token": "+84900000002",
+            "customer_id": "adf349fb-bbfc-4102-96a1-65af0b063389",
             "amount": 200,
         },
     ]
     assert response.missing_mappings == []
-    assert mapping_repo.requested_keys == {db_email_key, db_phone_key}
+    assert mapping_repo.requested_keys == {db_customer_key}
     assert audit_repo.audit_logs == []
     assert uow.commits == 0
     assert trino.sql is not None
@@ -157,12 +164,12 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
 
 @pytest.mark.asyncio
 async def test_query_audits_missing_pii_mappings() -> None:
-    missing_key = PiiMappingKey("trino", "email_token", "missing-token")
+    missing_key = PiiMappingKey("trino", "customer_id", "missing-customer")
     audit_repo = FakeAuditLogRepository()
     uow = FakeUnitOfWork()
     service = DataQueryService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
-        trino=FakeTrinoClient([{"email_token": "missing-token"}]),
+        trino=FakeTrinoClient([{"customer_id": "missing-customer"}]),
         pii_mappings=FakePiiMappingRepository({}),
         audit_logs=audit_repo,
         mapping_cache=InMemoryPiiMappingCache(max_size=10),
@@ -175,7 +182,7 @@ async def test_query_audits_missing_pii_mappings() -> None:
         offset=0,
     )
 
-    assert response.rows == [{"email_token": "missing-token"}]
+    assert response.rows == [{"customer_id": "missing-customer"}]
     assert [mapping.model_dump() for mapping in response.missing_mappings] == [
         {
             "source_system": missing_key.source_system,
@@ -194,3 +201,75 @@ async def test_query_audits_missing_pii_mappings() -> None:
         },
     ]
     assert uow.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
+    trino = FakeTrinoClient([{"stt": 1, "accountid": "VNH001"}])
+    mapping_repo = FakePiiMappingRepository({})
+    service = DataQueryService(
+        settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
+        trino=trino,
+        pii_mappings=mapping_repo,
+        audit_logs=FakeAuditLogRepository(),
+        mapping_cache=InMemoryPiiMappingCache(max_size=10),
+        uow=FakeUnitOfWork(),
+    )
+
+    response = await service.power_bi_deeplink_1(
+        actor=make_user(),
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 2),
+        limit=1000,
+        customer_ids=("VNH001", "VNH002"),
+    )
+
+    assert response.rows == [{"stt": 1, "accountid": "VNH001"}]
+    assert response.missing_mappings == []
+    assert mapping_repo.requested_keys == set()
+    assert trino.sql is not None
+    assert "FROM wh_cpm.cpm_event_raw" in trino.sql
+    assert "LEFT OUTER JOIN wh_bo_hudi.t_cust_customer" in trino.sql
+    assert "wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
+    assert "wh_cpm.cpm_event_raw.accountid IN" in trino.sql
+    assert "AS event_time" in trino.sql
+    assert "AS bank_name" in trino.sql
+    assert trino.params["key_1"] == "topup_result"
+    assert trino.params["element_at_3"] == "deeplink"
+    assert trino.params["date_1"] == date(2026, 6, 1)
+    assert trino.params["date_2"] == date(2026, 6, 2)
+    assert trino.params["element_at_5"] == "processing"
+    assert trino.params["accountid_1"] == ["VNH001", "VNH002"]
+    assert trino.params["param_4"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
+    trino = FakeTrinoClient([{"stt": 1, "accountid": "VNH001"}])
+    mapping_repo = FakePiiMappingRepository({})
+    service = DataQueryService(
+        settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
+        trino=trino,
+        pii_mappings=mapping_repo,
+        audit_logs=FakeAuditLogRepository(),
+        mapping_cache=InMemoryPiiMappingCache(max_size=10),
+        uow=FakeUnitOfWork(),
+    )
+
+    response = await service.power_bi_deeplink_2(
+        actor=make_user(),
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 2),
+        limit=500,
+    )
+
+    assert response.rows == [{"stt": 1, "accountid": "VNH001"}]
+    assert response.missing_mappings == []
+    assert mapping_repo.requested_keys == set()
+    assert trino.sql is not None
+    assert "wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
+    assert "wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
+    assert trino.params["key_1"] == "topup_bank_app"
+    assert trino.params["element_at_3"] == "deeplink"
+    assert "processing" not in trino.params.values()
+    assert trino.params["param_4"] == 500

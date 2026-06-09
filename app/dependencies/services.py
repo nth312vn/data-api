@@ -8,7 +8,7 @@ from app.dependencies.repositories import (
     get_user_repository,
 )
 from app.infrastructure.database.unit_of_work import UnitOfWork
-from app.infrastructure.trino.client import DbApiTrinoClient, TrinoClient
+from app.infrastructure.trino.client import TrinoClient, TrinoPythonClient
 from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.pii_mapping import PiiMappingRepository
 from app.repositories.interfaces.user import UserRepository
@@ -18,7 +18,7 @@ from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 from app.services.user import UserService
 
 _pii_mapping_cache: InMemoryPiiMappingCache | None = None
-_trino_client: DbApiTrinoClient | None = None
+_trino_client: TrinoPythonClient | None = None
 
 
 def get_auth_service(
@@ -32,8 +32,9 @@ def get_auth_service(
 def get_user_service(
     users: UserRepository = Depends(get_user_repository),
     uow: UnitOfWork = Depends(get_unit_of_work),
+    settings: Settings = Depends(get_settings),
 ) -> UserService:
-    return UserService(users=users, uow=uow)
+    return UserService(users=users, uow=uow, settings=settings)
 
 
 def get_trino_client(
@@ -41,7 +42,7 @@ def get_trino_client(
 ) -> TrinoClient:
     global _trino_client
     if _trino_client is None:
-        _trino_client = DbApiTrinoClient(settings=settings)
+        _trino_client = TrinoPythonClient(settings=settings)
     return _trino_client
 
 

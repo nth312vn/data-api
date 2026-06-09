@@ -39,10 +39,8 @@ class Settings(BaseSettings):
     trino_host: str = "localhost"
     trino_port: int = 8080
     trino_user: str = "data-api"
-    trino_catalog: str = "hive"
-    trino_schema: str = "default"
+    trino_password: SecretStr | None = None
     trino_http_scheme: str = "http"
-    trino_users_table: str = "users"
 
     pii_mapping_cache_max_size: int = 10_000
 

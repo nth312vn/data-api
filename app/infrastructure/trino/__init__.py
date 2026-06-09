@@ -1,3 +1,3 @@
-from app.infrastructure.trino.client import TrinoClient, TrinoColumn
+from app.infrastructure.trino.client import TrinoClient, TrinoColumn, TrinoPythonClient
 
-__all__ = ["TrinoClient", "TrinoColumn"]
+__all__ = ["TrinoClient", "TrinoColumn", "TrinoPythonClient"]

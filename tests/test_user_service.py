@@ -3,12 +3,10 @@ from uuid import uuid4
 import pytest
 
 from app.core.config import Settings
-from app.core.exceptions import AuthenticationError, ConflictError
-from app.core.security import hash_password
+from app.core.security import verify_password
 from app.models.user import User, UserRole
-from app.schemas.auth import LoginRequest
-from app.schemas.user import UserCreate
-from app.services.auth import AuthService
+from app.schemas.user import UserAdminCreate, UserAdminUpdate
+from app.services.user import UserService
 
 
 class FakeUserRepository:
@@ -29,8 +27,6 @@ class FakeUserRepository:
 
     async def create(self, user: User) -> User:
         user.id = uuid4()
-        user.role = UserRole.user
-        user.is_active = True
         self.users.append(user)
         return user
 
@@ -64,64 +60,57 @@ def settings() -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_register_creates_user(settings: Settings) -> None:
+async def test_admin_create_user_sets_role_and_hashes_password(
+    settings: Settings,
+) -> None:
     repo = FakeUserRepository()
     uow = FakeUnitOfWork()
-    service = AuthService(users=repo, uow=uow, settings=settings)
+    service = UserService(users=repo, uow=uow, settings=settings)
 
-    user = await service.register(
-        UserCreate(
-            email="USER@example.com",
-            username="ExampleUser",
+    user = await service.create_user(
+        UserAdminCreate(
+            email="ADMIN@example.com",
+            username="AdminUser",
             password="a-very-secure-password",
+            role=UserRole.admin,
         ),
     )
 
-    assert user.email == "user@example.com"
-    assert user.username == "exampleuser"
+    assert user.email == "admin@example.com"
+    assert user.username == "adminuser"
+    assert user.role == UserRole.admin
+    assert user.hashed_password != "a-very-secure-password"
+    assert verify_password("a-very-secure-password", user.hashed_password)
     assert uow.committed
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_duplicate_email(settings: Settings) -> None:
+async def test_admin_update_user_can_change_password_and_status(
+    settings: Settings,
+) -> None:
     repo = FakeUserRepository()
-    existing = User(
+    user = User(
         id=uuid4(),
         email="user@example.com",
         username="user",
-        hashed_password="hash",
+        hashed_password="old-hash",
         is_active=True,
         role=UserRole.user,
     )
-    repo.users.append(existing)
-    service = AuthService(users=repo, uow=FakeUnitOfWork(), settings=settings)
+    repo.users.append(user)
+    uow = FakeUnitOfWork()
+    service = UserService(users=repo, uow=uow, settings=settings)
 
-    with pytest.raises(ConflictError):
-        await service.register(
-            UserCreate(
-                email="user@example.com",
-                username="another",
-                password="a-very-secure-password",
-            ),
-        )
-
-
-@pytest.mark.asyncio
-async def test_login_rejects_bad_password(settings: Settings) -> None:
-    repo = FakeUserRepository()
-    repo.users.append(
-        User(
-            id=uuid4(),
-            email="user@example.com",
-            username="user",
-            hashed_password=hash_password("a-very-secure-password", rounds=4),
-            is_active=True,
-            role=UserRole.user,
+    updated = await service.update_user(
+        user.id,
+        UserAdminUpdate(
+            password="another-secure-password",
+            is_active=False,
+            role=UserRole.admin,
         ),
     )
-    service = AuthService(users=repo, uow=FakeUnitOfWork(), settings=settings)
 
-    with pytest.raises(AuthenticationError):
-        await service.login(
-            LoginRequest(email="user@example.com", password="wrong-password"),
-        )
+    assert updated.is_active is False
+    assert updated.role == UserRole.admin
+    assert verify_password("another-secure-password", updated.hashed_password)
+    assert uow.committed

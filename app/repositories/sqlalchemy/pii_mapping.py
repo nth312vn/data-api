@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,5 +66,5 @@ class SQLAlchemyPiiMappingRepository:
         self,
         model: type[PiiMappingModelMixin],
         attribute_name: str,
-    ) -> ColumnElement[str]:
-        return cast(ColumnElement[str], getattr(model, attribute_name))
+    ) -> ColumnElement[Any]:
+        return cast(ColumnElement[Any], getattr(model, attribute_name))

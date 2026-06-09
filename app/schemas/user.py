@@ -23,6 +23,11 @@ class UserCreate(BaseModel):
         return value.strip().lower()
 
 
+class UserAdminCreate(UserCreate):
+    role: UserRole = UserRole.user
+    is_active: bool = True
+
+
 class UserUpdate(BaseModel):
     username: str | None = Field(
         default=None,
@@ -31,6 +36,30 @@ class UserUpdate(BaseModel):
         pattern=r"^[a-zA-Z0-9_.-]+$",
     )
     full_name: str | None = Field(default=None, max_length=255)
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value is not None else value
+
+
+class UserAdminUpdate(BaseModel):
+    email: EmailStr | None = None
+    username: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=50,
+        pattern=r"^[a-zA-Z0-9_.-]+$",
+    )
+    password: str | None = Field(default=None, min_length=12, max_length=128)
+    full_name: str | None = Field(default=None, max_length=255)
+    is_active: bool | None = None
+    role: UserRole | None = None
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str | None) -> str | None:
+        return value.lower() if value is not None else value
 
     @field_validator("username")
     @classmethod

@@ -3,42 +3,29 @@ from typing import Any
 import pytest
 
 from app.core.config import Settings
-from app.infrastructure.trino.client import DbApiTrinoClient, TrinoColumn
+from app.infrastructure.trino.client import TrinoColumn, TrinoPythonClient
 
 
-class FakeCursor:
-    description = [("value",)]
-
-    def __init__(self, rows: list[tuple[int]]) -> None:
+class FakeMappingResult:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
-        self.executed_sql: list[str] = []
-        self.closed = False
 
-    def execute(self, sql: str) -> None:
-        self.executed_sql.append(sql)
-
-    def fetchall(self) -> list[tuple[int]]:
+    def all(self) -> list[dict[str, Any]]:
         return self.rows
 
-    def close(self) -> None:
-        self.closed = True
+
+class FakeResult:
+    def __init__(self, columns: list[str], rows: list[tuple[Any, ...]]) -> None:
+        self.columns = columns
+        self.rows = rows
+
+    def mappings(self) -> FakeMappingResult:
+        return FakeMappingResult(
+            [dict(zip(self.columns, row, strict=True)) for row in self.rows],
+        )
 
 
 class FakeConnection:
-    def __init__(self) -> None:
-        self.cursors: list[FakeCursor] = []
-        self.closed = False
-
-    def cursor(self) -> FakeCursor:
-        cursor = FakeCursor(rows=[(len(self.cursors) + 1,)])
-        self.cursors.append(cursor)
-        return cursor
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class MetadataCursor:
     def __init__(
         self,
         *,
@@ -47,40 +34,41 @@ class MetadataCursor:
     ) -> None:
         self._responses = responses
         self._executed_sql = executed_sql
-        self.description: list[tuple[str]] | None = None
-        self.rows: list[tuple[Any, ...]] = []
         self.closed = False
 
-    def execute(self, sql: str) -> None:
-        self._executed_sql.append(sql)
-        columns, rows = self._responses[sql]
-        self.description = [(column,) for column in columns]
-        self.rows = rows
+    def __enter__(self) -> "FakeConnection":
+        return self
 
-    def fetchall(self) -> list[tuple[Any, ...]]:
-        return self.rows
-
-    def close(self) -> None:
+    def __exit__(self, *_args: object) -> None:
         self.closed = True
 
+    def execute(self, statement: Any) -> FakeResult:
+        sql = str(statement)
+        self._executed_sql.append(sql)
+        columns, rows = self._responses[sql]
+        return FakeResult(columns, rows)
 
-class MetadataConnection:
+
+class FakeEngine:
     def __init__(
         self,
         responses: dict[str, tuple[list[str], list[tuple[Any, ...]]]],
     ) -> None:
         self.responses = responses
         self.executed_sql: list[str] = []
-        self.closed = False
+        self.connections: list[FakeConnection] = []
+        self.disposed = False
 
-    def cursor(self) -> MetadataCursor:
-        return MetadataCursor(
+    def connect(self) -> FakeConnection:
+        connection = FakeConnection(
             responses=self.responses,
             executed_sql=self.executed_sql,
         )
+        self.connections.append(connection)
+        return connection
 
-    def close(self) -> None:
-        self.closed = True
+    def dispose(self) -> None:
+        self.disposed = True
 
 
 def make_settings() -> Settings:
@@ -88,19 +76,52 @@ def make_settings() -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_trino_client_reuses_connection_between_queries() -> None:
-    connections: list[FakeConnection] = []
-    connect_kwargs: list[dict[str, Any]] = []
+async def test_trino_client_uses_sqlalchemy_url_and_password() -> None:
+    captured: dict[str, Any] = {}
+    engine = FakeEngine({"SELECT 1": (["value"], [(1,)])})
 
-    def connect_factory(**kwargs: Any) -> FakeConnection:
-        connect_kwargs.append(kwargs)
-        connection = FakeConnection()
-        connections.append(connection)
-        return connection
+    def engine_factory(*args: Any, **kwargs: Any) -> FakeEngine:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return engine
 
-    client = DbApiTrinoClient(
+    client = TrinoPythonClient(
+        settings=Settings(
+            jwt_secret_key="test-secret-key-with-at-least-32-chars",
+            trino_password="secret-password",
+        ),
+        engine_factory=engine_factory,
+    )
+
+    result = await client.execute("SELECT 1")
+
+    url = captured["args"][0]
+    assert result == [{"value": 1}]
+    assert url.drivername == "trino"
+    assert url.username == "data-api"
+    assert url.password == "secret-password"
+    assert url.host == "localhost"
+    assert url.port == 8080
+    assert captured["kwargs"] == {"connect_args": {"http_scheme": "http"}}
+
+
+@pytest.mark.asyncio
+async def test_trino_client_reuses_engine_between_queries() -> None:
+    engines: list[FakeEngine] = []
+
+    def engine_factory(*_args: Any, **_kwargs: Any) -> FakeEngine:
+        engine = FakeEngine(
+            {
+                "SELECT 1": (["value"], [(1,)]),
+                "SELECT 2": (["value"], [(2,)]),
+            },
+        )
+        engines.append(engine)
+        return engine
+
+    client = TrinoPythonClient(
         settings=make_settings(),
-        connect_factory=connect_factory,
+        engine_factory=engine_factory,
     )
 
     first_result = await client.execute("SELECT 1")
@@ -108,72 +129,63 @@ async def test_trino_client_reuses_connection_between_queries() -> None:
 
     assert first_result == [{"value": 1}]
     assert second_result == [{"value": 2}]
-    assert len(connections) == 1
-    assert connect_kwargs == [
-        {
-            "host": "localhost",
-            "port": 8080,
-            "user": "data-api",
-            "http_scheme": "http",
-        },
-    ]
-    assert connections[0].closed is False
-    assert [cursor.executed_sql for cursor in connections[0].cursors] == [
-        ["SELECT 1"],
-        ["SELECT 2"],
-    ]
-    assert all(cursor.closed for cursor in connections[0].cursors)
+    assert len(engines) == 1
+    assert engines[0].disposed is False
+    assert engines[0].executed_sql == ["SELECT 1", "SELECT 2"]
+    assert all(connection.closed for connection in engines[0].connections)
 
     await client.close()
 
-    assert connections[0].closed is True
+    assert engines[0].disposed is True
 
 
 @pytest.mark.asyncio
-async def test_trino_client_reconnects_after_query_failure() -> None:
-    class FailingCursor(FakeCursor):
-        def execute(self, sql: str) -> None:
+async def test_trino_client_recreates_engine_after_query_failure() -> None:
+    class FailingConnection(FakeConnection):
+        def execute(self, statement: Any) -> FakeResult:
             raise RuntimeError("query failed")
 
-    class FailingConnection(FakeConnection):
-        def cursor(self) -> FakeCursor:
-            cursor = FailingCursor(rows=[])
-            self.cursors.append(cursor)
-            return cursor
+    class FailingEngine(FakeEngine):
+        def connect(self) -> FakeConnection:
+            connection = FailingConnection(
+                responses=self.responses,
+                executed_sql=self.executed_sql,
+            )
+            self.connections.append(connection)
+            return connection
 
-    connections: list[FakeConnection] = []
-    connect_calls = 0
+    engines: list[FakeEngine] = []
+    engine_calls = 0
 
-    def connect_factory(**kwargs: Any) -> FakeConnection:
-        nonlocal connect_calls
-        connect_calls += 1
-        connection: FakeConnection
-        if connect_calls == 1:
-            connection = FailingConnection()
+    def engine_factory(*_args: Any, **_kwargs: Any) -> FakeEngine:
+        nonlocal engine_calls
+        engine_calls += 1
+        if engine_calls == 1:
+            engine: FakeEngine = FailingEngine({})
         else:
-            connection = FakeConnection()
-        connections.append(connection)
-        return connection
+            engine = FakeEngine({"SELECT 1": (["value"], [(1,)])})
+        engines.append(engine)
+        return engine
 
-    client = DbApiTrinoClient(
+    client = TrinoPythonClient(
         settings=make_settings(),
-        connect_factory=connect_factory,
+        engine_factory=engine_factory,
     )
 
     with pytest.raises(RuntimeError, match="query failed"):
         await client.execute("SELECT broken")
 
-    assert connections[0].closed is True
+    assert engines[0].disposed is True
 
     result = await client.execute("SELECT 1")
 
     assert result == [{"value": 1}]
-    assert len(connections) == 2
+    assert len(engines) == 2
 
 
 @pytest.mark.asyncio
 async def test_trino_client_reads_catalog_schema_table_and_column_metadata() -> None:
-    connection = MetadataConnection(
+    engine = FakeEngine(
         {
             "SHOW CATALOGS": (
                 ["Catalog"],
@@ -197,12 +209,12 @@ async def test_trino_client_reads_catalog_schema_table_and_column_metadata() -> 
         },
     )
 
-    def connect_factory(**kwargs: Any) -> MetadataConnection:
-        return connection
+    def engine_factory(*_args: Any, **_kwargs: Any) -> FakeEngine:
+        return engine
 
-    client = DbApiTrinoClient(
+    client = TrinoPythonClient(
         settings=make_settings(),
-        connect_factory=connect_factory,
+        engine_factory=engine_factory,
     )
 
     catalogs = await client.get_catalogs()
@@ -231,7 +243,7 @@ async def test_trino_client_reads_catalog_schema_table_and_column_metadata() -> 
             comment=None,
         ),
     ]
-    assert connection.executed_sql == [
+    assert engine.executed_sql == [
         "SHOW CATALOGS",
         'SHOW SCHEMAS FROM "hive"',
         'SHOW TABLES FROM "hive"."default"',
