@@ -101,6 +101,15 @@ Run migrations manually:
 docker compose run --rm api alembic upgrade head
 ```
 
+Build through a pip proxy when needed:
+
+```bash
+PIP_PROXY=http://user:password@proxy.example.com:8080 docker compose build api
+```
+
+`docker/pip.conf` contains safe pip defaults. Keep proxy credentials in
+environment variables or a local untracked config, not in git.
+
 Run checks locally:
 
 ```bash

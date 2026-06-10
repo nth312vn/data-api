@@ -1,4 +1,7 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, status
+from fastapi.security import OAuth2PasswordRequestForm
 
 from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_auth_service, get_user_service
@@ -21,6 +24,15 @@ async def login(
     payload: LoginRequest,
     service: AuthService = Depends(get_auth_service),
 ) -> TokenPair:
+    return await service.login(payload)
+
+
+@router.post("/token", response_model=TokenPair, include_in_schema=False)
+async def token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    service: AuthService = Depends(get_auth_service),
+) -> TokenPair:
+    payload = LoginRequest(username=form_data.username, password=form_data.password)
     return await service.login(payload)
 
 

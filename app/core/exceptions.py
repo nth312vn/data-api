@@ -2,6 +2,7 @@ from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
@@ -73,15 +74,22 @@ def error_response(
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
-        content={
-            "error": {
-                "code": code,
-                "message": message,
-                "details": details or {},
-                "request_id": getattr(request.state, "request_id", None),
+        content=jsonable_encoder(
+            {
+                "error": {
+                    "code": code,
+                    "message": message,
+                    "details": details or {},
+                    "request_id": getattr(request.state, "request_id", None),
+                },
             },
-        },
+            custom_encoder={bytes: _decode_bytes},
+        ),
     )
+
+
+def _decode_bytes(value: bytes) -> str:
+    return value.decode("utf-8", errors="replace")
 
 
 def register_exception_handlers(app: FastAPI) -> None:

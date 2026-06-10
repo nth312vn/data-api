@@ -22,7 +22,7 @@ from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.authorization import AuthorizationRepository
 from app.repositories.interfaces.user import UserRepository
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
 
 async def get_current_user(

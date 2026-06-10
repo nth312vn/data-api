@@ -11,6 +11,7 @@ dependencies = [
     "greenlet>=3.0.3",
     "bcrypt>=4.0.1",
     "pydantic-settings>=2.3.4",
+    "python-multipart>=0.0.9",
     "pyjwt>=2.8.0",
     "sqlalchemy[asyncio]>=2.0.31",
     "trino[sqlalchemy]>=0.329.0",
