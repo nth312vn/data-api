@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.infrastructure.database.session import AsyncSessionFactory, engine
 from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
 from app.models.user import UserRole
+from app.repositories.sqlalchemy.authorization import SQLAlchemyAuthorizationRepository
 from app.repositories.sqlalchemy.user import SQLAlchemyUserRepository
 from app.schemas.user import UserAdminCreate, UserAdminUpdate
 from app.services.user import UserService
@@ -20,6 +21,7 @@ async def create_initial_admin() -> None:
 
     async with AsyncSessionFactory() as session:
         users = SQLAlchemyUserRepository(session)
+        authorization = SQLAlchemyAuthorizationRepository(session)
         existing_admin = await users.get_admin_user()
         if existing_admin is not None:
             print(f"Admin user already exists: {existing_admin.email}; skipping init")
@@ -27,6 +29,7 @@ async def create_initial_admin() -> None:
 
         service = UserService(
             users=users,
+            authorization=authorization,
             uow=SQLAlchemyUnitOfWork(session),
             settings=settings,
         )

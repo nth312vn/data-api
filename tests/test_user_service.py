@@ -3,8 +3,10 @@ from uuid import uuid4
 import pytest
 
 from app.core.config import Settings
-from app.core.security import verify_password
+from app.core.exceptions import AuthenticationError
+from app.core.security import hash_password, verify_password
 from app.models.user import User, UserRole
+from app.schemas.auth import ChangePasswordRequest
 from app.schemas.user import UserAdminCreate, UserAdminUpdate
 from app.services.user import UserService
 
@@ -24,6 +26,9 @@ class FakeUserRepository:
 
     async def get_admin_user(self) -> User | None:
         return next((user for user in self.users if user.role == UserRole.admin), None)
+
+    async def list_users(self, *, limit: int, offset: int) -> list[User]:
+        return self.users[offset : offset + limit]
 
     async def create(self, user: User) -> User:
         user.id = uuid4()
@@ -114,3 +119,58 @@ async def test_admin_update_user_can_change_password_and_status(
     assert updated.role == UserRole.admin
     assert verify_password("another-secure-password", updated.hashed_password)
     assert uow.committed
+
+
+@pytest.mark.asyncio
+async def test_change_password_verifies_current_password(
+    settings: Settings,
+) -> None:
+    repo = FakeUserRepository()
+    user = User(
+        id=uuid4(),
+        email="user@example.com",
+        username="user",
+        hashed_password=hash_password("old-secure-password", rounds=4),
+        is_active=True,
+        role=UserRole.user,
+    )
+    repo.users.append(user)
+    uow = FakeUnitOfWork()
+    service = UserService(users=repo, uow=uow, settings=settings)
+
+    await service.change_password(
+        user,
+        ChangePasswordRequest(
+            current_password="old-secure-password",
+            new_password="new-secure-password",
+        ),
+    )
+
+    assert verify_password("new-secure-password", user.hashed_password)
+    assert uow.committed
+
+
+@pytest.mark.asyncio
+async def test_change_password_rejects_wrong_current_password(
+    settings: Settings,
+) -> None:
+    repo = FakeUserRepository()
+    user = User(
+        id=uuid4(),
+        email="user@example.com",
+        username="user",
+        hashed_password=hash_password("old-secure-password", rounds=4),
+        is_active=True,
+        role=UserRole.user,
+    )
+    repo.users.append(user)
+    service = UserService(users=repo, uow=FakeUnitOfWork(), settings=settings)
+
+    with pytest.raises(AuthenticationError):
+        await service.change_password(
+            user,
+            ChangePasswordRequest(
+                current_password="wrong-password",
+                new_password="new-secure-password",
+            ),
+        )

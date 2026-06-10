@@ -27,6 +27,9 @@ class FakeUserRepository:
     async def get_admin_user(self) -> User | None:
         return next((user for user in self.users if user.role == UserRole.admin), None)
 
+    async def list_users(self, *, limit: int, offset: int) -> list[User]:
+        return self.users[offset : offset + limit]
+
     async def create(self, user: User) -> User:
         user.id = uuid4()
         user.role = UserRole.user
@@ -123,5 +126,5 @@ async def test_login_rejects_bad_password(settings: Settings) -> None:
 
     with pytest.raises(AuthenticationError):
         await service.login(
-            LoginRequest(email="user@example.com", password="wrong-password"),
+            LoginRequest(username="user", password="wrong-password"),
         )

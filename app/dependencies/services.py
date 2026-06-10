@@ -4,15 +4,18 @@ from app.core.config import Settings, get_settings
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.repositories import (
     get_audit_log_repository,
+    get_authorization_repository,
     get_pii_mapping_repository,
     get_user_repository,
 )
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.trino.client import TrinoClient, TrinoPythonClient
 from app.repositories.interfaces.audit_log import AuditLogRepository
+from app.repositories.interfaces.authorization import AuthorizationRepository
 from app.repositories.interfaces.pii_mapping import PiiMappingRepository
 from app.repositories.interfaces.user import UserRepository
 from app.services.auth import AuthService
+from app.services.authorization import AuthorizationService
 from app.services.data_query import DataQueryService
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 from app.services.user import UserService
@@ -23,18 +26,42 @@ _trino_client: TrinoPythonClient | None = None
 
 def get_auth_service(
     users: UserRepository = Depends(get_user_repository),
+    authorization: AuthorizationRepository = Depends(get_authorization_repository),
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
 ) -> AuthService:
-    return AuthService(users=users, uow=uow, settings=settings)
+    return AuthService(
+        users=users,
+        authorization=authorization,
+        uow=uow,
+        settings=settings,
+    )
 
 
 def get_user_service(
     users: UserRepository = Depends(get_user_repository),
+    authorization: AuthorizationRepository = Depends(get_authorization_repository),
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
 ) -> UserService:
-    return UserService(users=users, uow=uow, settings=settings)
+    return UserService(
+        users=users,
+        authorization=authorization,
+        uow=uow,
+        settings=settings,
+    )
+
+
+def get_authorization_service(
+    authorization: AuthorizationRepository = Depends(get_authorization_repository),
+    users: UserRepository = Depends(get_user_repository),
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> AuthorizationService:
+    return AuthorizationService(
+        authorization=authorization,
+        users=users,
+        uow=uow,
+    )
 
 
 def get_trino_client(

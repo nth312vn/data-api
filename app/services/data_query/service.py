@@ -1,11 +1,10 @@
 from datetime import date
-from hashlib import sha256
 from typing import Any
 
 from app.core.config import Settings
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.trino.client import TrinoClient
-from app.models.audit_log import AuditLog, AuditLogStatus
+from app.models.audit_log import AuditLog
 from app.models.user import User
 from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.pii_mapping import PiiMappingKey, PiiMappingRepository
@@ -198,17 +197,17 @@ class DataQueryService:
     ) -> None:
         await self.audit_logs.create(
             AuditLog(
-                event_type="pii_mapping_missing",
-                actor_user_id=actor.id,
-                status=AuditLogStatus.missing_mapping,
-                payload={
-                    "route": spec.route_name,
+                user_id=actor.id,
+                username=actor.username,
+                api_route=spec.route_name,
+                parameters={
                     "source_system": spec.source_system,
-                    "sql_sha256": sha256(str(spec.statement).encode()).hexdigest(),
                     "missing_mappings": [
                         mapping.model_dump() for mapping in missing_mappings
                     ],
                 },
+                allowed=False,
+                denied_reason="Missing PII mapping",
             ),
         )
         await self.uow.commit()

@@ -22,6 +22,13 @@ class UserRepository(Protocol):
 
     async def get_admin_user(self) -> User | None: ...
 
+    async def list_users(
+        self,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[User]: ...
+
     async def create(self, user: User) -> User: ...
 
     async def update(self, user: User, values: dict[str, object]) -> User: ...

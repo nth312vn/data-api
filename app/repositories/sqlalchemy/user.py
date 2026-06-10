@@ -22,7 +22,9 @@ class SQLAlchemyUserRepository:
         self,
         email: str,
     ) -> User | None:
-        stmt = select(User).where(User.email == email.lower())
+        stmt = select(User).where(
+            User.email == email.lower(),
+        )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -30,7 +32,9 @@ class SQLAlchemyUserRepository:
         self,
         username: str,
     ) -> User | None:
-        stmt = select(User).where(User.username == username.lower())
+        stmt = select(User).where(
+            User.username == username.lower(),
+        )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -38,6 +42,16 @@ class SQLAlchemyUserRepository:
         stmt = select(User).where(User.role == UserRole.admin).limit(1)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def list_users(
+        self,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[User]:
+        stmt = select(User).order_by(User.created_at).offset(offset).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def create(self, user: User) -> User:
         self.session.add(user)

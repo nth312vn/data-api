@@ -1,18 +1,23 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    username: str = Field(min_length=1, max_length=50)
     password: str = Field(min_length=1, max_length=128)
 
-    @field_validator("email")
+    @field_validator("username")
     @classmethod
-    def normalize_email(cls, value: str) -> str:
-        return value.lower()
+    def normalize_username(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
 
 
 class TokenPair(BaseModel):

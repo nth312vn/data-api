@@ -7,15 +7,15 @@ from app.models.user import UserRole
 
 
 class UserCreate(BaseModel):
-    email: EmailStr
+    email: EmailStr | None = None
     username: str = Field(min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_.-]+$")
     password: str = Field(min_length=12, max_length=128)
     full_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("email")
     @classmethod
-    def normalize_email(cls, value: str) -> str:
-        return value.lower()
+    def normalize_email(cls, value: str | None) -> str | None:
+        return value.lower() if value is not None else value
 
     @field_validator("username")
     @classmethod
@@ -71,7 +71,7 @@ class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    email: EmailStr
+    email: EmailStr | None
     username: str
     full_name: str | None
     is_active: bool

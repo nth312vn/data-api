@@ -191,9 +191,11 @@ async def test_query_audits_missing_pii_mappings() -> None:
         },
     ]
     assert len(audit_repo.audit_logs) == 1
-    assert audit_repo.audit_logs[0].event_type == "pii_mapping_missing"
-    assert audit_repo.audit_logs[0].payload["route"] == "data.users"
-    assert audit_repo.audit_logs[0].payload["missing_mappings"] == [
+    assert audit_repo.audit_logs[0].api_route == "data.users"
+    assert audit_repo.audit_logs[0].allowed is False
+    assert audit_repo.audit_logs[0].denied_reason == "Missing PII mapping"
+    assert audit_repo.audit_logs[0].parameters is not None
+    assert audit_repo.audit_logs[0].parameters["missing_mappings"] == [
         {
             "source_system": missing_key.source_system,
             "pii_type": missing_key.pii_type,

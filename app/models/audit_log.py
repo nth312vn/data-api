@@ -1,36 +1,31 @@
 import uuid
-from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKey, Index, String
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, BaseModelMixin
 
 
-class AuditLogStatus(StrEnum):
-    success = "success"
-    missing_mapping = "missing_mapping"
-    failed = "failed"
-
-
 class AuditLog(BaseModelMixin, Base):
     __tablename__ = "audit_logs"
     __table_args__ = (
-        Index("ix_audit_logs_event_type", "event_type"),
-        Index("ix_audit_logs_actor_user_id", "actor_user_id"),
-        Index("ix_audit_logs_status", "status"),
+        Index("ix_audit_logs_user_id", "user_id"),
+        Index("ix_audit_logs_api_route", "api_route"),
+        Index("ix_audit_logs_allowed", "allowed"),
+        Index("ix_audit_logs_request_id", "request_id"),
     )
 
-    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    status: Mapped[AuditLogStatus] = mapped_column(
-        Enum(AuditLogStatus, name="audit_log_status"),
-        nullable=False,
-    )
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    api_route: Mapped[str] = mapped_column(String(500), nullable=False)
+    parameters: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    denied_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    time_process_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
