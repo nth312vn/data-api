@@ -230,10 +230,10 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
     assert response.missing_mappings == []
     assert mapping_repo.requested_keys == set()
     assert trino.sql is not None
-    assert "FROM wh_cpm.cpm_event_raw" in trino.sql
-    assert "LEFT OUTER JOIN wh_bo_hudi.t_cust_customer" in trino.sql
-    assert "wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
-    assert "wh_cpm.cpm_event_raw.accountid IN" in trino.sql
+    assert "FROM hive.wh_cpm.cpm_event_raw" in trino.sql
+    assert "LEFT OUTER JOIN hive.wh_bo_hudi.t_cust_customer" in trino.sql
+    assert "hive.wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
+    assert "hive.wh_cpm.cpm_event_raw.accountid IN" in trino.sql
     assert "AS event_time" in trino.sql
     assert "AS bank_name" in trino.sql
     assert trino.params["key_1"] == "topup_result"
@@ -269,8 +269,8 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
     assert response.missing_mappings == []
     assert mapping_repo.requested_keys == set()
     assert trino.sql is not None
-    assert "wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
-    assert "wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
+    assert "hive.wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
+    assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
     assert trino.params["key_1"] == "topup_bank_app"
     assert trino.params["element_at_3"] == "deeplink"
     assert "processing" not in trino.params.values()

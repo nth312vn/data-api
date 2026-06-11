@@ -101,6 +101,32 @@ Run migrations manually:
 docker compose run --rm api alembic upgrade head
 ```
 
+Run the API against an external PostgreSQL database:
+
+```bash
+docker compose -f docker-compose.external-db.yml up --build
+```
+
+Set `DATABASE_URL` in `.env` to the address reachable from inside the
+container, for example:
+
+```env
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@192.168.1.10:5432/data_api
+```
+
+If PostgreSQL runs on the Docker host machine, use `host.docker.internal`
+instead of `localhost` or `127.0.0.1`:
+
+```env
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:5432/data_api
+```
+
+The container waits for `DATABASE_URL` before running migrations. Tune this with
+`WAIT_FOR_DATABASE`, `DATABASE_CONNECT_TIMEOUT_SECONDS`, and
+`DATABASE_CONNECT_RETRY_SECONDS`. Disable startup migrations or admin bootstrap
+with `RUN_MIGRATIONS=false` or `RUN_INITIAL_ADMIN=false` when the external
+database is managed elsewhere.
+
 Build through a pip proxy when needed:
 
 ```bash
@@ -126,6 +152,11 @@ Important variables:
 
 - `DATABASE_URL`: async SQLAlchemy PostgreSQL URL.
 - `PII_DATABASE_URL`: async SQLAlchemy URL for the independent PII mapping database.
+- `WAIT_FOR_DATABASE`: wait for `DATABASE_URL` before startup.
+- `DATABASE_CONNECT_TIMEOUT_SECONDS`: maximum startup wait for `DATABASE_URL`.
+- `DATABASE_CONNECT_RETRY_SECONDS`: delay between database connection attempts.
+- `RUN_MIGRATIONS`: run Alembic migrations on container startup.
+- `RUN_INITIAL_ADMIN`: create or promote the initial admin on container startup.
 - `JWT_SECRET_KEY`: at least 32 characters; use a high-entropy secret in production.
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: short-lived access token lifetime.
 - `REFRESH_TOKEN_EXPIRE_MINUTES`: refresh token lifetime.

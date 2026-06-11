@@ -12,8 +12,10 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.sql import Executable
+from sqlalchemy.sql.elements import quoted_name
 
 POWER_BI_METADATA = MetaData()
+POWER_BI_CATALOG = "hive"
 POWER_BI_EVENT_TABLE = Table(
     "cpm_event_raw",
     POWER_BI_METADATA,
@@ -22,14 +24,14 @@ POWER_BI_EVENT_TABLE = Table(
     Column("accountid", String),
     Column("user_agent", String),
     Column("key", String),
-    schema="wh_cpm",
+    schema=quoted_name(f"{POWER_BI_CATALOG}.wh_cpm", quote=False),
 )
 POWER_BI_CUSTOMER_TABLE = Table(
     "t_cust_customer",
     POWER_BI_METADATA,
     Column("c_customer_code", String),
     Column("c_cust_full_name", String),
-    schema="wh_bo_hudi",
+    schema=quoted_name(f"{POWER_BI_CATALOG}.wh_bo_hudi", quote=False),
 )
 
 
