@@ -8,9 +8,9 @@ Create Date: 2026-06-09 07:43:35.149820+00:00
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
 
 revision: str = "fdda72aad25e"
 down_revision: str | None = None

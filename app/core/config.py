@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
     log_level: str = "INFO"
+    log_format: str = "text"
 
     trino_host: str = "localhost"
     trino_port: int = 8080

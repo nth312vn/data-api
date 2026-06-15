@@ -207,7 +207,7 @@ class DataQueryService:
                     ],
                 },
                 allowed=False,
-                denied_reason="Missing PII mapping",
+                error_message="Missing PII mapping",
             ),
         )
         await self.uow.commit()

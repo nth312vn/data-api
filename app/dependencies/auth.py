@@ -75,7 +75,7 @@ async def require_api_permission(
         request.url.path,
         api_v1_prefix=settings.api_v1_prefix,
     )
-    allowed, denied_reason = await check_api_permission(
+    allowed, error_message = await check_api_permission(
         user=current_user,
         route_path=route_path,
         authorization=authorization,
@@ -88,12 +88,12 @@ async def require_api_permission(
         uow=uow,
         current_user=current_user,
         allowed=allowed,
-        denied_reason=denied_reason,
+        error_message=error_message,
         time_process_ms=elapsed_ms,
     )
 
     if not allowed:
-        raise AuthorizationError(denied_reason or "API permission denied")
+        raise AuthorizationError(error_message or "API permission denied")
 
     return current_user
 
@@ -125,7 +125,7 @@ async def _write_api_permission_audit_log(
     uow: UnitOfWork,
     current_user: User,
     allowed: bool,
-    denied_reason: str | None,
+    error_message: str | None,
     time_process_ms: int,
 ) -> None:
     await audit_logs.create(
@@ -135,9 +135,8 @@ async def _write_api_permission_audit_log(
             api_route=request.url.path,
             parameters=_request_parameters(request),
             allowed=allowed,
-            denied_reason=denied_reason,
+            error_message=error_message,
             time_process_ms=time_process_ms,
-            request_id=_get_request_id(request),
         ),
     )
     await uow.commit()
@@ -152,13 +151,6 @@ def _normalize_route_path(path: str, *, api_v1_prefix: str) -> str:
     if path.startswith(prefix):
         path = path[len(prefix) :]
     return path.rstrip("/") or "/"
-
-
-def _get_request_id(request: Request) -> str | None:
-    request_id = getattr(request.state, "request_id", None)
-    if isinstance(request_id, str):
-        return request_id
-    return request.headers.get("X-Request-ID")
 
 
 def _elapsed_ms(started_at: float) -> int:

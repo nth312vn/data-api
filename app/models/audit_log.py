@@ -14,7 +14,6 @@ class AuditLog(BaseModelMixin, Base):
         Index("ix_audit_logs_user_id", "user_id"),
         Index("ix_audit_logs_api_route", "api_route"),
         Index("ix_audit_logs_allowed", "allowed"),
-        Index("ix_audit_logs_request_id", "request_id"),
     )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -26,6 +25,5 @@ class AuditLog(BaseModelMixin, Base):
     api_route: Mapped[str] = mapped_column(String(500), nullable=False)
     parameters: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    denied_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     time_process_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    request_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
