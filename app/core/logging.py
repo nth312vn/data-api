@@ -14,33 +14,48 @@ request_id_context: ContextVar[str | None] = ContextVar(
 
 class RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = request_id_context.get() or "-"
+        request_id = request_id_context.get()
+        if request_id:
+            record.request_id = request_id
         return True
 
 
 class TextFormatter(logging.Formatter):
     def __init__(self) -> None:
-        super().__init__(
+        self.with_request_id = logging.Formatter(
             fmt=(
                 "%(asctime)s %(levelname)s [%(name)s] "
                 "request_id=%(request_id)s %(message)s"
             ),
             datefmt="%Y-%m-%d %H:%M:%S",
         )
+        self.without_request_id = logging.Formatter(
+            fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+
+    def format(self, record: logging.LogRecord) -> str:
+        request_id = getattr(record, "request_id", None) or request_id_context.get()
+        if request_id:
+            record.request_id = request_id
+            return self.with_request_id.format(record)
+        return self.without_request_id.format(record)
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        request_id = request_id_context.get()
         payload: dict[str, Any] = {
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
-            "request_id": request_id_context.get() or None,
             "module": record.module,
             "function": record.funcName,
             "line": record.lineno,
         }
+        if request_id:
+            payload["request_id"] = request_id
         if record.exc_info:
             exc_type, exc_value, exc_traceback = record.exc_info
             payload["exception"] = {
