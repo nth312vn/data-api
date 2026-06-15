@@ -207,8 +207,13 @@ async def test_query_audits_missing_pii_mappings() -> None:
 
 @pytest.mark.asyncio
 async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
-    trino = FakeTrinoClient([{"stt": 1, "accountid": "VNH001"}])
-    mapping_repo = FakePiiMappingRepository({})
+    trino = FakeTrinoClient([{"stt": 1, "accountid": "VNH001234567890X"}])
+    account_key = PiiMappingKey("trino", "customer_id", "VNH001234567890")
+    mapping_repo = FakePiiMappingRepository(
+        {
+            account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
+        },
+    )
     service = DataQueryService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
@@ -226,9 +231,11 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
         customer_ids=("VNH001", "VNH002"),
     )
 
-    assert response.rows == [{"stt": 1, "accountid": "VNH001"}]
+    assert response.rows == [
+        {"stt": 1, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679"}
+    ]
     assert response.missing_mappings == []
-    assert mapping_repo.requested_keys == set()
+    assert mapping_repo.requested_keys == {account_key}
     assert trino.sql is not None
     assert "FROM hive.wh_cpm.cpm_event_raw" in trino.sql
     assert "LEFT OUTER JOIN hive.wh_bo_hudi.t_cust_customer" in trino.sql
@@ -247,8 +254,18 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
 
 @pytest.mark.asyncio
 async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
-    trino = FakeTrinoClient([{"stt": 1, "accountid": "VNH001"}])
-    mapping_repo = FakePiiMappingRepository({})
+    trino = FakeTrinoClient(
+        [
+            {"stt": 1, "accountid": "VNH001234567890X"},
+            {"stt": 2, "accountid": "VNH001"},
+        ],
+    )
+    account_key = PiiMappingKey("trino", "customer_id", "VNH001234567890")
+    mapping_repo = FakePiiMappingRepository(
+        {
+            account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
+        },
+    )
     service = DataQueryService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
@@ -265,9 +282,12 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
         limit=500,
     )
 
-    assert response.rows == [{"stt": 1, "accountid": "VNH001"}]
+    assert response.rows == [
+        {"stt": 1, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679"},
+        {"stt": 2, "accountid": "VNH001"},
+    ]
     assert response.missing_mappings == []
-    assert mapping_repo.requested_keys == set()
+    assert mapping_repo.requested_keys == {account_key}
     assert trino.sql is not None
     assert "hive.wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
     assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql

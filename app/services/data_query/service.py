@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -10,9 +11,34 @@ from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.pii_mapping import PiiMappingKey, PiiMappingRepository
 from app.schemas.data_query import DataRowsResponse, MissingPiiMapping
 from app.services.data_query.power_bi import build_power_bi_deeplink_query
-from app.services.data_query.routes import DataRouteSpec
+from app.services.data_query.routes import (
+    DataRouteSpec,
+    PiiFieldMappingRule,
+    pii_token_when_length_greater_than,
+)
 from app.services.data_query.users import build_users_query
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
+
+DEEPLINK_ACCOUNT_ID_PII_RULE = PiiFieldMappingRule(
+    pii_type="customer_id",
+    token_mapper=pii_token_when_length_greater_than(
+        15,
+        strip_last_character=True,
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _PiiFieldReference:
+    row_index: int
+    field: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PiiMappingPlan:
+    rows: list[dict[str, Any]]
+    requested_keys: set[PiiMappingKey]
+    references_by_key: dict[PiiMappingKey, list[_PiiFieldReference]]
 
 
 class DataQueryService:
@@ -68,7 +94,10 @@ class DataQueryService:
                 customer_ids=customer_ids,
                 status="processing",
             ),
-            pii_fields=(),
+            pii_fields=("accountid",),
+            pii_field_rules={
+                "accountid": DEEPLINK_ACCOUNT_ID_PII_RULE,
+            },
         )
         return await self._execute_route(spec=spec, actor=actor)
 
@@ -91,7 +120,10 @@ class DataQueryService:
                 limit=limit,
                 customer_ids=customer_ids,
             ),
-            pii_fields=(),
+            pii_fields=("accountid",),
+            pii_field_rules={
+                "accountid": DEEPLINK_ACCOUNT_ID_PII_RULE,
+            },
         )
         return await self._execute_route(spec=spec, actor=actor)
 
@@ -102,13 +134,12 @@ class DataQueryService:
         actor: User,
     ) -> DataRowsResponse:
         rows = await self.trino.execute(spec.statement)
-        requested_keys = self._collect_mapping_keys(rows, spec)
-        mapped_values = await self._resolve_mappings(requested_keys)
-        missing_keys = requested_keys - set(mapped_values)
+        mapping_plan = self._prepare_mapping_plan(rows=rows, spec=spec)
+        mapped_values = await self._resolve_mappings(mapping_plan.requested_keys)
+        missing_keys = mapping_plan.requested_keys - set(mapped_values)
 
-        mapped_rows = self._apply_mappings(
-            rows=rows,
-            spec=spec,
+        self._apply_resolved_mappings(
+            mapping_plan=mapping_plan,
             mapped_values=mapped_values,
         )
 
@@ -131,27 +162,73 @@ class DataQueryService:
                 missing_mappings=missing_mappings,
             )
 
-        return DataRowsResponse(rows=mapped_rows, missing_mappings=missing_mappings)
+        return DataRowsResponse(
+            rows=mapping_plan.rows,
+            missing_mappings=missing_mappings,
+        )
 
-    def _collect_mapping_keys(
+    def _prepare_mapping_plan(
         self,
+        *,
         rows: list[dict[str, Any]],
         spec: DataRouteSpec,
-    ) -> set[PiiMappingKey]:
-        keys: set[PiiMappingKey] = set()
-        for row in rows:
-            for field in spec.pii_fields:
-                value = row.get(field)
-                if value is None:
-                    continue
-                keys.add(
-                    PiiMappingKey(
-                        source_system=spec.source_system,
-                        pii_type=field,
-                        token=str(value),
-                    ),
+    ) -> _PiiMappingPlan:
+        references_by_key: dict[PiiMappingKey, list[_PiiFieldReference]] = {}
+        if len(spec.pii_fields) == 1:
+            field = spec.pii_fields[0]
+            for row_index, row in enumerate(rows):
+                self._add_mapping_reference(
+                    references_by_key=references_by_key,
+                    spec=spec,
+                    row_index=row_index,
+                    field=field,
+                    value=row.get(field),
                 )
-        return keys
+            return _PiiMappingPlan(
+                rows=rows,
+                requested_keys=set(references_by_key),
+                references_by_key=references_by_key,
+            )
+
+        for row_index, row in enumerate(rows):
+            for field in spec.pii_fields:
+                self._add_mapping_reference(
+                    references_by_key=references_by_key,
+                    spec=spec,
+                    row_index=row_index,
+                    field=field,
+                    value=row.get(field),
+                )
+        return _PiiMappingPlan(
+            rows=rows,
+            requested_keys=set(references_by_key),
+            references_by_key=references_by_key,
+        )
+
+    def _add_mapping_reference(
+        self,
+        *,
+        references_by_key: dict[PiiMappingKey, list[_PiiFieldReference]],
+        spec: DataRouteSpec,
+        row_index: int,
+        field: str,
+        value: Any,
+    ) -> None:
+        if value is None:
+            return
+        key = self._mapping_key_for_field(
+            spec=spec,
+            field=field,
+            value=value,
+        )
+        if key is None:
+            return
+        references_by_key.setdefault(key, []).append(
+            _PiiFieldReference(
+                row_index=row_index,
+                field=field,
+            ),
+        )
 
     async def _resolve_mappings(
         self,
@@ -164,29 +241,44 @@ class DataQueryService:
         self.mapping_cache.set_many(db_values)
         return {**cached, **db_values}
 
-    def _apply_mappings(
+    def _apply_resolved_mappings(
         self,
         *,
-        rows: list[dict[str, Any]],
-        spec: DataRouteSpec,
+        mapping_plan: _PiiMappingPlan,
         mapped_values: dict[PiiMappingKey, str],
-    ) -> list[dict[str, Any]]:
-        mapped_rows: list[dict[str, Any]] = []
-        for row in rows:
-            mapped_row = row.copy()
-            for field in spec.pii_fields:
-                value = row.get(field)
-                if value is None:
-                    continue
-                key = PiiMappingKey(
-                    source_system=spec.source_system,
-                    pii_type=field,
-                    token=str(value),
+    ) -> None:
+        for key, mapped_value in mapped_values.items():
+            references = mapping_plan.references_by_key.get(key, ())
+            for reference in references:
+                mapping_plan.rows[reference.row_index][reference.field] = (
+                    mapped_value
                 )
-                if key in mapped_values:
-                    mapped_row[field] = mapped_values[key]
-            mapped_rows.append(mapped_row)
-        return mapped_rows
+
+    def _mapping_key_for_field(
+        self,
+        *,
+        spec: DataRouteSpec,
+        field: str,
+        value: Any,
+    ) -> PiiMappingKey | None:
+        value_string = str(value)
+        rule = spec.pii_field_rules.get(field)
+        if rule is None:
+            return PiiMappingKey(
+                source_system=spec.source_system,
+                pii_type=field,
+                token=value_string,
+            )
+
+        token = rule.token_mapper(value)
+        if token is None:
+            return None
+
+        return PiiMappingKey(
+            source_system=spec.source_system,
+            pii_type=rule.pii_type,
+            token=token,
+        )
 
     async def _audit_missing_mappings(
         self,
