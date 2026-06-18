@@ -7,7 +7,6 @@ from app.core.exceptions import AuthenticationError, ConflictError, NotFoundErro
 from app.core.security import hash_password, verify_password
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.models.user import User
-from app.repositories.interfaces.authorization import AuthorizationRepository
 from app.repositories.interfaces.user import UserRepository
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.user import UserAdminCreate, UserAdminUpdate, UserUpdate
@@ -20,12 +19,10 @@ class UserService:
         users: UserRepository,
         uow: UnitOfWork,
         settings: Settings,
-        authorization: AuthorizationRepository | None = None,
     ) -> None:
         self.users = users
         self.uow = uow
         self.settings = settings
-        self.authorization = authorization
 
     async def create_user(self, payload: UserAdminCreate) -> User:
         await self._ensure_unique_identity(
@@ -40,14 +37,11 @@ class UserService:
                 payload.password,
                 rounds=self.settings.password_bcrypt_rounds,
             ),
-            full_name=payload.full_name,
-            is_active=payload.is_active,
             role=payload.role,
         )
 
         try:
             created = await self.users.create(user)
-            await self._assign_legacy_role(created)
             await self.uow.commit()
         except IntegrityError as exc:
             await self.uow.rollback()
@@ -123,8 +117,6 @@ class UserService:
 
         try:
             updated = await self.users.update(user, updates)
-            if "role" in updates:
-                await self._assign_legacy_role(updated)
             await self.uow.commit()
         except IntegrityError as exc:
             await self.uow.rollback()
@@ -169,12 +161,3 @@ class UserService:
                     "Username is already registered",
                     code="username_exists",
                 )
-
-    async def _assign_legacy_role(self, user: User) -> None:
-        if self.authorization is None:
-            return
-
-        role = await self.authorization.get_role_by_code(user.role.value)
-        role_codes = await self.authorization.get_user_role_codes(user.id)
-        if role is not None and role.code not in role_codes:
-            await self.authorization.assign_role(user_id=user.id, role_id=role.id)

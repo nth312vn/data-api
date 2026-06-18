@@ -1,19 +1,7 @@
-from app.models import (
-    ApiPermission,
-    AuditLog,
-    Base,
-    Role,
-    User,
-    UserApiPermission,
-    UserRoleAssignment,
-)
+from app.models import AuditLog, Base, User
 
 __all__ = [
-    "ApiPermission",
     "AuditLog",
     "Base",
-    "Role",
     "User",
-    "UserApiPermission",
-    "UserRoleAssignment",
 ]

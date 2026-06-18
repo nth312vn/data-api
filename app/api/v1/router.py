@@ -1,12 +1,10 @@
 from fastapi import APIRouter, Depends
 
 from app.api.v1.endpoints import (
-    api_permissions,
     auth,
     data,
     health,
     power_bi,
-    roles,
     users,
 )
 from app.dependencies.auth import require_api_permission
@@ -18,18 +16,6 @@ api_router.include_router(
     users.router,
     prefix="/users",
     tags=["users"],
-    dependencies=[Depends(require_api_permission)],
-)
-api_router.include_router(
-    roles.router,
-    prefix="/roles",
-    tags=["roles"],
-    dependencies=[Depends(require_api_permission)],
-)
-api_router.include_router(
-    api_permissions.router,
-    prefix="/api_permissions",
-    tags=["api_permissions"],
     dependencies=[Depends(require_api_permission)],
 )
 api_router.include_router(

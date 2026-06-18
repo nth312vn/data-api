@@ -12,14 +12,12 @@ from app.core.security import decode_token
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.repositories import (
     get_audit_log_repository,
-    get_authorization_repository,
     get_user_repository,
 )
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.models.audit_log import AuditLog
 from app.models.user import User, UserRole
 from app.repositories.interfaces.audit_log import AuditLogRepository
-from app.repositories.interfaces.authorization import AuthorizationRepository
 from app.repositories.interfaces.user import UserRepository
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
@@ -41,7 +39,7 @@ async def get_current_user(
         raise AuthenticationError("Invalid token subject") from exc
 
     user = await users.get_by_id(user_id)
-    if user is None or not user.is_active:
+    if user is None:
         raise AuthenticationError("Invalid authentication credentials")
 
     return user
@@ -50,12 +48,8 @@ async def get_current_user(
 def require_roles(*allowed_roles: UserRole) -> Callable[..., object]:
     async def dependency(
         current_user: User = Depends(get_current_user),
-        authorization: AuthorizationRepository = Depends(get_authorization_repository),
     ) -> User:
-        allowed = {role.value for role in allowed_roles}
-        role_codes = set(await authorization.get_user_role_codes(current_user.id))
-        role_codes.add(current_user.role.value)
-        if not role_codes.intersection(allowed):
+        if current_user.role not in allowed_roles:
             raise AuthorizationError()
         return current_user
 
@@ -65,7 +59,6 @@ def require_roles(*allowed_roles: UserRole) -> Callable[..., object]:
 async def require_api_permission(
     request: Request,
     current_user: User = Depends(get_current_user),
-    authorization: AuthorizationRepository = Depends(get_authorization_repository),
     audit_logs: AuditLogRepository = Depends(get_audit_log_repository),
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
@@ -78,7 +71,6 @@ async def require_api_permission(
     allowed, error_message = await check_api_permission(
         user=current_user,
         route_path=route_path,
-        authorization=authorization,
     )
     elapsed_ms = _elapsed_ms(started_at)
 
@@ -102,20 +94,21 @@ async def check_api_permission(
     *,
     user: User,
     route_path: str,
-    authorization: AuthorizationRepository,
 ) -> tuple[bool, str | None]:
-    role_codes = set(await authorization.get_user_role_codes(user.id))
-    role_codes.add(user.role.value)
-    if UserRole.admin.value in role_codes:
+    if user.role == UserRole.admin:
         return True, None
 
-    allowed = await authorization.user_has_permission_for_route(
-        user_id=user.id,
-        route_path=route_path,
-    )
-    if allowed:
+    if _route_matches_username(route_path, user.username):
         return True, None
     return False, "API permission denied"
+
+
+def _route_matches_username(route_path: str, username: str) -> bool:
+    normalized_path = route_path.rstrip("/") or "/"
+    username_prefix = f"/{username.lower()}"
+    return normalized_path == username_prefix or normalized_path.startswith(
+        f"{username_prefix}/",
+    )
 
 
 async def _write_api_permission_audit_log(

@@ -90,7 +90,7 @@ async def test_admin_create_user_sets_role_and_hashes_password(
 
 
 @pytest.mark.asyncio
-async def test_admin_update_user_can_change_password_and_status(
+async def test_admin_update_user_can_change_password_and_role(
     settings: Settings,
 ) -> None:
     repo = FakeUserRepository()
@@ -99,7 +99,6 @@ async def test_admin_update_user_can_change_password_and_status(
         email="user@example.com",
         username="user",
         hashed_password="old-hash",
-        is_active=True,
         role=UserRole.user,
     )
     repo.users.append(user)
@@ -110,12 +109,10 @@ async def test_admin_update_user_can_change_password_and_status(
         user.id,
         UserAdminUpdate(
             password="another-secure-password",
-            is_active=False,
             role=UserRole.admin,
         ),
     )
 
-    assert updated.is_active is False
     assert updated.role == UserRole.admin
     assert verify_password("another-secure-password", updated.hashed_password)
     assert uow.committed
@@ -131,7 +128,6 @@ async def test_change_password_verifies_current_password(
         email="user@example.com",
         username="user",
         hashed_password=hash_password("old-secure-password", rounds=4),
-        is_active=True,
         role=UserRole.user,
     )
     repo.users.append(user)
@@ -160,7 +156,6 @@ async def test_change_password_rejects_wrong_current_password(
         email="user@example.com",
         username="user",
         hashed_password=hash_password("old-secure-password", rounds=4),
-        is_active=True,
         role=UserRole.user,
     )
     repo.users.append(user)

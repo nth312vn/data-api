@@ -10,7 +10,6 @@ class UserCreate(BaseModel):
     email: EmailStr | None = None
     username: str = Field(min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_.-]+$")
     password: str = Field(min_length=12, max_length=128)
-    full_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("email")
     @classmethod
@@ -25,7 +24,6 @@ class UserCreate(BaseModel):
 
 class UserAdminCreate(UserCreate):
     role: UserRole = UserRole.user
-    is_active: bool = True
 
 
 class UserUpdate(BaseModel):
@@ -35,7 +33,6 @@ class UserUpdate(BaseModel):
         max_length=50,
         pattern=r"^[a-zA-Z0-9_.-]+$",
     )
-    full_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("username")
     @classmethod
@@ -52,8 +49,6 @@ class UserAdminUpdate(BaseModel):
         pattern=r"^[a-zA-Z0-9_.-]+$",
     )
     password: str | None = Field(default=None, min_length=12, max_length=128)
-    full_name: str | None = Field(default=None, max_length=255)
-    is_active: bool | None = None
     role: UserRole | None = None
 
     @field_validator("email")
@@ -73,8 +68,6 @@ class UserRead(BaseModel):
     id: UUID
     email: EmailStr | None
     username: str
-    full_name: str | None
-    is_active: bool
     role: UserRole
     created_at: datetime
     updated_at: datetime

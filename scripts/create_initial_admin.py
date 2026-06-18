@@ -7,18 +7,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.core.config import get_settings
-from app.infrastructure.database.session import AsyncSessionFactory, engine
-from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
-from app.models.user import UserRole
-from app.repositories.sqlalchemy.authorization import SQLAlchemyAuthorizationRepository
-from app.repositories.sqlalchemy.user import SQLAlchemyUserRepository
-from app.schemas.user import UserAdminCreate, UserAdminUpdate
-from app.services.user import UserService
+from app.core.config import get_settings  # noqa: E402
+from app.infrastructure.database.session import (  # noqa: E402
+    AsyncSessionFactory,
+    engine,
+)
+from app.infrastructure.database.unit_of_work import (  # noqa: E402
+    SQLAlchemyUnitOfWork,
+)
+from app.models.user import UserRole  # noqa: E402
+from app.repositories.sqlalchemy.user import (  # noqa: E402
+    SQLAlchemyUserRepository,
+)
+from app.schemas.user import UserAdminCreate, UserAdminUpdate  # noqa: E402
+from app.services.user import UserService  # noqa: E402
 
 DEFAULT_ADMIN_EMAIL = "admin@example.com"
 DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_FULL_NAME = "Initial Admin"
 
 
 async def create_initial_admin() -> None:
@@ -27,7 +32,6 @@ async def create_initial_admin() -> None:
 
     async with AsyncSessionFactory() as session:
         users = SQLAlchemyUserRepository(session)
-        authorization = SQLAlchemyAuthorizationRepository(session)
         existing_admin = await users.get_admin_user()
         if existing_admin is not None:
             print(f"Admin user already exists: {existing_admin.email}; skipping init")
@@ -35,7 +39,6 @@ async def create_initial_admin() -> None:
 
         service = UserService(
             users=users,
-            authorization=authorization,
             uow=SQLAlchemyUnitOfWork(session),
             settings=settings,
         )
@@ -50,9 +53,7 @@ async def create_initial_admin() -> None:
                     email=DEFAULT_ADMIN_EMAIL,
                     username=DEFAULT_ADMIN_USERNAME,
                     password=password,
-                    full_name=DEFAULT_ADMIN_FULL_NAME,
                     role=UserRole.admin,
-                    is_active=True,
                 ),
             )
             print(f"Created initial admin user: {admin.email}")
@@ -62,8 +63,6 @@ async def create_initial_admin() -> None:
                 UserAdminUpdate(
                     password=password,
                     role=UserRole.admin,
-                    is_active=True,
-                    full_name=existing_user.full_name or DEFAULT_ADMIN_FULL_NAME,
                 ),
             )
             print(f"Promoted existing user to initial admin: {admin.email}")

@@ -32,8 +32,6 @@ class FakeUserRepository:
 
     async def create(self, user: User) -> User:
         user.id = uuid4()
-        user.role = UserRole.user
-        user.is_active = True
         self.users.append(user)
         return user
 
@@ -93,7 +91,6 @@ async def test_register_rejects_duplicate_email(settings: Settings) -> None:
         email="user@example.com",
         username="user",
         hashed_password="hash",
-        is_active=True,
         role=UserRole.user,
     )
     repo.users.append(existing)
@@ -118,7 +115,6 @@ async def test_login_rejects_bad_password(settings: Settings) -> None:
             email="user@example.com",
             username="user",
             hashed_password=hash_password("a-very-secure-password", rounds=4),
-            is_active=True,
             role=UserRole.user,
         ),
     )

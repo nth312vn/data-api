@@ -12,8 +12,7 @@ from app.core.security import (
     verify_password,
 )
 from app.infrastructure.database.unit_of_work import UnitOfWork
-from app.models.user import User
-from app.repositories.interfaces.authorization import AuthorizationRepository
+from app.models.user import User, UserRole
 from app.repositories.interfaces.user import UserRepository
 from app.schemas.auth import LoginRequest, TokenPair
 from app.schemas.user import UserCreate
@@ -26,10 +25,8 @@ class AuthService:
         users: UserRepository,
         uow: UnitOfWork,
         settings: Settings,
-        authorization: AuthorizationRepository | None = None,
     ) -> None:
         self.users = users
-        self.authorization = authorization
         self.uow = uow
         self.settings = settings
 
@@ -49,12 +46,11 @@ class AuthService:
                 payload.password,
                 rounds=self.settings.password_bcrypt_rounds,
             ),
-            full_name=payload.full_name,
+            role=UserRole.user,
         )
 
         try:
             created = await self.users.create(user)
-            await self._assign_default_role(created)
             await self.uow.commit()
         except IntegrityError as exc:
             await self.uow.rollback()
@@ -66,9 +62,6 @@ class AuthService:
         user = await self.users.get_by_username(payload.username)
         if user is None or not verify_password(payload.password, user.hashed_password):
             raise AuthenticationError("Invalid username or password")
-        if not user.is_active:
-            raise AuthenticationError("User is inactive")
-
         return await self._create_token_pair(user)
 
     async def refresh(self, refresh_token: str) -> TokenPair:
@@ -87,16 +80,14 @@ class AuthService:
             raise AuthenticationError("Invalid token subject") from exc
 
         user = await self.users.get_by_id(user_id)
-        if user is None or not user.is_active:
+        if user is None:
             raise AuthenticationError("Invalid refresh token")
 
         return await self._create_token_pair(user)
 
     async def _create_token_pair(self, user: User) -> TokenPair:
-        roles = await self._get_role_codes(user)
         extra_claims = {
             "role": user.role.value,
-            "roles": roles,
             "username": user.username,
         }
         access_token = create_access_token(
@@ -114,20 +105,3 @@ class AuthService:
             refresh_token=refresh_token,
             expires_in=self.settings.access_token_expire_minutes * 60,
         )
-
-    async def _get_role_codes(self, user: User) -> list[str]:
-        if self.authorization is None:
-            return [user.role.value]
-
-        roles = await self.authorization.get_user_role_codes(user.id)
-        if user.role.value not in roles:
-            roles.append(user.role.value)
-        return sorted(set(roles))
-
-    async def _assign_default_role(self, user: User) -> None:
-        if self.authorization is None:
-            return
-
-        role = await self.authorization.get_role_by_code(user.role.value)
-        if role is not None:
-            await self.authorization.assign_role(user_id=user.id, role_id=role.id)

@@ -186,7 +186,7 @@ Login:
 curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "admin@example.com",
+    "username": "admin",
     "password": "<temporary_password_from_startup_log>"
   }'
 ```
@@ -201,9 +201,7 @@ curl -X POST http://localhost:8000/api/v1/users \
     "email": "user@example.com",
     "username": "exampleuser",
     "password": "a-very-secure-password",
-    "full_name": "Example User",
-    "role": "user",
-    "is_active": true
+    "role": "user"
   }'
 ```
 
@@ -213,7 +211,7 @@ Update user as admin:
 curl -X PATCH http://localhost:8000/api/v1/users/<user_id> \
   -H "Authorization: Bearer <admin_access_token>" \
   -H "Content-Type: application/json" \
-  -d '{"role": "admin", "is_active": true}'
+  -d '{"role": "admin"}'
 ```
 
 Delete user as admin:
@@ -244,7 +242,7 @@ Update profile:
 curl -X PATCH http://localhost:8000/api/v1/users/me \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
-  -d '{"full_name": "Updated Name"}'
+  -d '{"username": "new_api_prefix"}'
 ```
 
 Delete current user:
@@ -256,7 +254,12 @@ curl -X DELETE http://localhost:8000/api/v1/users/me \
 
 ## Auth Design
 
-Access tokens are short-lived JWTs used for API authorization. Refresh tokens are longer-lived JWTs with `typ=refresh` and a unique `jti` claim. The current implementation validates that the user still exists and is active before rotating a token pair.
+Access tokens are short-lived JWTs used for API authorization. Refresh tokens are longer-lived JWTs with `typ=refresh` and a unique `jti` claim. The current implementation validates that the user still exists before rotating a token pair.
+
+The `users.role` column is the only role source and accepts `user` or `admin`.
+Admins can access every protected API. A regular user can access only the route
+whose first segment exactly matches their username; for example, username
+`power_bi` can access `/power_bi` and `/power_bi/*`, but not `/power_bi_extra`.
 
 For stricter production revocation, add a refresh-token table keyed by hashed `jti`, device metadata, expiry, and revocation timestamp. That table belongs in a future `auth_tokens` module without changing the user entity.
 

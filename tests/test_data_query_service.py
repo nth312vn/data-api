@@ -95,7 +95,6 @@ def make_user() -> User:
         email="user@example.com",
         username="user",
         hashed_password="hash",
-        is_active=True,
         role=UserRole.user,
     )
 
