@@ -40,8 +40,9 @@ def build_power_bi_deeplink_query(
     event_key: str,
     start_date: date,
     end_date: date,
-    limit: int,
-    customer_ids: tuple[str, ...],
+    segmentation_filters: tuple[str, ...] = (),
+    user_agent_filters: tuple[str, ...] = (),
+    limit: int | None = None,
     status: str | None = None,
 ) -> Executable:
     event_raw = POWER_BI_EVENT_TABLE
@@ -61,10 +62,26 @@ def build_power_bi_deeplink_query(
     ]
     if status is not None:
         conditions.append(func.element_at(segmentation, "status") == status)
-    if customer_ids:
-        conditions.append(account_id.in_(customer_ids))
+    if segmentation_filters:
+        conditions.append(
+            func.lower(func.element_at(segmentation, "bank_name")).in_(
+                [value.casefold() for value in segmentation_filters],
+            ),
+        )
+    if user_agent_filters:
+        conditions.append(
+            or_(
+                *(
+                    func.lower(user_agent).contains(
+                        filter_value.casefold(),
+                        autoescape=True,
+                    )
+                    for filter_value in user_agent_filters
+                ),
+            ),
+        )
 
-    return (
+    statement = (
         select(
             func.row_number().over(order_by=event_timestamp).label("stt"),
             func.date_format(
@@ -100,5 +117,7 @@ def build_power_bi_deeplink_query(
         )
         .where(*conditions)
         .order_by(event_timestamp)
-        .limit(limit)
     )
+    if limit is not None:
+        statement = statement.limit(limit)
+    return statement

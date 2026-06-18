@@ -26,7 +26,8 @@ Flow:
 
 1. A client calls a route such as `GET /api/v1/data/users`.
 2. The service builds the Trino SQL internally from fixed route config.
-3. The service collects route-owned PII token fields such as `customer_id`.
+3. The service applies each route's PII token rules, then left-joins resolved
+   mappings into the result with a Polars DataFrame.
 4. At application startup, mapping tables are snapshotted into the independent
    in-memory PII cache using bounded, keyset-paginated queries.
 5. It resolves mappings from that in-memory cache first. Request misses are loaded
@@ -45,30 +46,27 @@ curl "http://localhost:8000/api/v1/data/users?limit=100&offset=0" \
   -H "Authorization: Bearer <access_token>"
 ```
 
-Power BI deeplink routes:
+Power BI deeplink routes use `GET`. When dates are omitted, both default to the
+current date. When `limit` is omitted, the response is not limited. Deeplink
+`segmentation`, `user_agent`, and `limit` filters run in Trino before records are
+returned. `customer_id` runs after PII mapping and accepts the mapped customer
+UUID. Repeated values and comma-separated values are both supported. A
+`segmentation` value is matched against `segmentation['bank_name']`.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/power_bi/deeplink_1 \
+curl --get http://localhost:8000/api/v1/power_bi/deeplink_1 \
   -H "Authorization: Bearer <access_token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "start_date": "2026-06-01",
-    "end_date": "2026-06-02",
-    "limit": 1000,
-    "customer_id": ["VNH001", "VNH002"]
-  }'
+  --data-urlencode "start_date=2026-06-01" \
+  --data-urlencode "end_date=2026-06-02" \
+  --data-urlencode "limit=1000" \
+  --data-urlencode "segmentation=VCB" \
+  --data-urlencode "user_agent=android" \
+  --data-urlencode "customer_id=7c37bb4b-0e15-4fb9-b589-f57211ac1679"
 ```
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/power_bi/deeplink_2 \
-  -H "Authorization: Bearer <access_token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "start_date": "2026-06-01",
-    "end_date": "2026-06-02",
-    "limit": 1000,
-    "customer_id": ["VNH001", "VNH002"]
-  }'
+curl --get http://localhost:8000/api/v1/power_bi/deeplink_2 \
+  -H "Authorization: Bearer <access_token>"
 ```
 
 Each PII source declares its own table and columns as a model class. These

@@ -27,13 +27,20 @@ def getenv(name: str, default: str) -> str:
 async def get_user(session, *, username: str, email: str | None) -> User | None:
     stmt = select(User).where(User.username == username)
     result = await session.execute(stmt)
-    user = result.scalar_one_or_none()
-    if user is not None or email is None:
-        return user
+    username_user = result.scalar_one_or_none()
+    if email is None:
+        return username_user
 
     stmt = select(User).where(User.email == email)
     result = await session.execute(stmt)
-    return result.scalar_one_or_none()
+    email_user = result.scalar_one_or_none()
+    if (
+        username_user is not None
+        and email_user is not None
+        and username_user.id != email_user.id
+    ):
+        raise ValueError("POWER_BI_USERNAME and POWER_BI_EMAIL belong to different users")
+    return username_user or email_user
 
 
 async def ensure_power_bi_user() -> None:
@@ -41,16 +48,18 @@ async def ensure_power_bi_user() -> None:
     username = getenv("POWER_BI_USERNAME", DEFAULT_USERNAME).lower()
     email = getenv("POWER_BI_EMAIL", DEFAULT_EMAIL).lower()
 
-    password = os.getenv("POWER_BI_PASSWORD")
-    generated_password = password is None or password == ""
-    if generated_password:
-        password = secrets.token_urlsafe(24)
-    if len(password) < 12:
+    configured_password = os.getenv("POWER_BI_PASSWORD")
+    if configured_password is not None and 0 < len(configured_password) < 12:
         raise ValueError("POWER_BI_PASSWORD must be at least 12 characters")
 
     async with AsyncSessionFactory() as session:
         user = await get_user(session, username=username, email=email)
+        generated_password: str | None = None
         if user is None:
+            password = configured_password
+            if not password:
+                password = secrets.token_urlsafe(24)
+                generated_password = password
             user = User(
                 email=email,
                 username=username,
@@ -66,9 +75,9 @@ async def ensure_power_bi_user() -> None:
             user.username = username
             user.email = email
             user.role = UserRole.user
-            if not generated_password:
+            if configured_password:
                 user.hashed_password = hash_password(
-                    password,
+                    configured_password,
                     rounds=settings.password_bcrypt_rounds,
                 )
                 print(f"Updated password for existing user: {user.username}")
@@ -80,8 +89,8 @@ async def ensure_power_bi_user() -> None:
     print(f"Username: {user.username}")
     print(f"Email: {user.email}")
     print(f"API prefix: /{user.username}")
-    if generated_password:
-        print(f"Temporary password: {password}")
+    if generated_password is not None:
+        print(f"Temporary password: {generated_password}")
 
 
 async def main() -> None:

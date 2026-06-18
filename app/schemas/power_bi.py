@@ -1,25 +1,37 @@
 from datetime import date
 from typing import Any, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class PowerBiDeeplinkRequest(BaseModel):
-    start_date: date = date(2026, 6, 1)
-    end_date: date = date(2026, 6, 2)
-    limit: int = Field(default=1000, ge=1, le=10000)
+    start_date: date = Field(default_factory=date.today)
+    end_date: date = Field(default_factory=date.today)
+    limit: int | None = Field(default=None, ge=1)
+    segmentation: list[str] = Field(default_factory=list)
+    user_agent: list[str] = Field(default_factory=list)
     customer_id: list[str] = Field(default_factory=list)
 
-    @field_validator("customer_id", mode="before")
+    @field_validator(
+        "segmentation",
+        "user_agent",
+        "customer_id",
+        mode="before",
+    )
     @classmethod
-    def normalize_customer_id(cls, value: Any) -> list[str]:
+    def normalize_filter_values(
+        cls,
+        value: Any,
+        info: ValidationInfo,
+    ) -> list[str]:
+        field_name = info.field_name or "filter"
         if value is None:
             return []
         if isinstance(value, str):
-            return cls._split_customer_ids([value])
+            return cls._split_filter_values([value], field_name=field_name)
         if isinstance(value, list):
-            return cls._split_customer_ids(value)
-        raise ValueError("customer_id must be a string or list of strings")
+            return cls._split_filter_values(value, field_name=field_name)
+        raise ValueError(f"{field_name} must be a string or list of strings")
 
     @model_validator(mode="after")
     def validate_date_range(self) -> Self:
@@ -28,10 +40,15 @@ class PowerBiDeeplinkRequest(BaseModel):
         return self
 
     @classmethod
-    def _split_customer_ids(cls, values: list[Any]) -> list[str]:
+    def _split_filter_values(
+        cls,
+        values: list[Any],
+        *,
+        field_name: str,
+    ) -> list[str]:
         normalized: list[str] = []
         for value in values:
             if not isinstance(value, str):
-                raise ValueError("customer_id must contain only strings")
+                raise ValueError(f"{field_name} must contain only strings")
             normalized.extend(item.strip() for item in value.split(",") if item.strip())
         return normalized

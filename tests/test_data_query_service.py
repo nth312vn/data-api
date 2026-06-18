@@ -100,9 +100,23 @@ def make_user() -> User:
 
 
 def test_power_bi_request_normalizes_customer_ids() -> None:
-    request = PowerBiDeeplinkRequest(customer_id=["VNH001,VNH002", " VNH003 "])
+    request = PowerBiDeeplinkRequest(
+        customer_id=["VNH001,VNH002", " VNH003 "],
+        segmentation=["VCB,ACB"],
+        user_agent=["Android,Dalvik"],
+    )
 
     assert request.customer_id == ["VNH001", "VNH002", "VNH003"]
+    assert request.segmentation == ["VCB", "ACB"]
+    assert request.user_agent == ["Android", "Dalvik"]
+
+
+def test_power_bi_request_defaults_to_today_without_limit() -> None:
+    request = PowerBiDeeplinkRequest()
+
+    assert request.start_date == date.today()
+    assert request.end_date == date.today()
+    assert request.limit is None
 
 
 @pytest.mark.asyncio
@@ -230,7 +244,14 @@ async def test_query_does_not_reload_keys_in_temporary_missing_cache() -> None:
 
 @pytest.mark.asyncio
 async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
-    trino = FakeTrinoClient([{"stt": 1, "accountid": "VNH001234567890X"}])
+    trino = FakeTrinoClient(
+        [
+            {
+                "stt": 1,
+                "accountid": "VNH001234567890X",
+            }
+        ],
+    )
     account_key = PiiMappingKey("trino", "customer_id", "VNH001234567890")
     mapping_repo = FakePiiMappingRepository(
         {
@@ -251,7 +272,7 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
         start_date=date(2026, 6, 1),
         end_date=date(2026, 6, 2),
         limit=1000,
-        customer_ids=("VNH001", "VNH002"),
+        customer_ids=("7c37bb4b-0e15-4fb9-b589-f57211ac1679",),
     )
 
     assert response.rows == [
@@ -263,7 +284,8 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
     assert "FROM hive.wh_cpm.cpm_event_raw" in trino.sql
     assert "LEFT OUTER JOIN hive.wh_bo_hudi.t_cust_customer" in trino.sql
     assert "hive.wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
-    assert "hive.wh_cpm.cpm_event_raw.accountid IN" in trino.sql
+    assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
+    assert " LIMIT " in trino.sql
     assert "AS event_time" in trino.sql
     assert "AS bank_name" in trino.sql
     assert trino.params["key_1"] == "topup_result"
@@ -271,7 +293,6 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
     assert trino.params["date_1"] == date(2026, 6, 1)
     assert trino.params["date_2"] == date(2026, 6, 2)
     assert trino.params["element_at_5"] == "processing"
-    assert trino.params["accountid_1"] == ["VNH001", "VNH002"]
     assert trino.params["param_4"] == 1000
 
 
@@ -302,7 +323,7 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
         actor=make_user(),
         start_date=date(2026, 6, 1),
         end_date=date(2026, 6, 2),
-        limit=500,
+        limit=None,
     )
 
     assert response.rows == [
@@ -317,4 +338,59 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
     assert trino.params["key_1"] == "topup_bank_app"
     assert trino.params["element_at_3"] == "deeplink"
     assert "processing" not in trino.params.values()
-    assert trino.params["param_4"] == 500
+    assert " LIMIT " not in trino.sql
+
+
+@pytest.mark.asyncio
+async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
+    first_key = PiiMappingKey("trino", "customer_id", "VNH001234567890")
+    first_uuid = "7c37bb4b-0e15-4fb9-b589-f57211ac1679"
+    trino = FakeTrinoClient(
+        [
+            {
+                "stt": 1,
+                "accountid": "VNH001234567890X",
+                "bank_name": "VCB",
+            },
+        ],
+    )
+    service = DataQueryService(
+        settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
+        trino=trino,
+        pii_mappings=FakePiiMappingRepository(
+            {
+                first_key: first_uuid,
+            },
+        ),
+        audit_logs=FakeAuditLogRepository(),
+        mapping_cache=InMemoryPiiMappingCache(),
+        uow=FakeUnitOfWork(),
+    )
+
+    response = await service.power_bi_deeplink_2(
+        actor=make_user(),
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 2),
+        limit=1,
+        segmentation_filters=("VCB",),
+        user_agent_filters=("android",),
+        customer_ids=(first_uuid,),
+    )
+
+    assert response.rows == [
+        {
+            "stt": 1,
+            "accountid": first_uuid,
+            "bank_name": "VCB",
+        }
+    ]
+    assert response.missing_mappings == []
+    assert trino.sql is not None
+    assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
+    assert "lower(element_at(hive.wh_cpm.cpm_event_raw.segmentation" in trino.sql
+    assert "lower(hive.wh_cpm.cpm_event_raw.user_agent) LIKE" in trino.sql
+    assert " LIMIT " in trino.sql
+    assert trino.params["element_at_4"] == "bank_name"
+    assert trino.params["lower_5"] == ["vcb"]
+    assert trino.params["lower_6"] == "android"
+    assert trino.params["param_4"] == 1
