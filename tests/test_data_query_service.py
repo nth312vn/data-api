@@ -51,12 +51,14 @@ class FakePiiMappingRepository:
     def __init__(self, mappings: dict[PiiMappingKey, str]) -> None:
         self.mappings = mappings
         self.requested_keys: set[PiiMappingKey] = set()
+        self.requests: list[set[PiiMappingKey]] = []
 
     async def get_many(
         self,
         keys: set[PiiMappingKey],
     ) -> dict[PiiMappingKey, PiiMappingRecord]:
         self.requested_keys = keys
+        self.requests.append(keys)
         return {
             key: PiiMappingRecord(
                 key=key,
@@ -108,7 +110,7 @@ def test_power_bi_request_normalizes_customer_ids() -> None:
 async def test_query_maps_pii_from_cache_and_database() -> None:
     cached_customer_key = PiiMappingKey("trino", "customer_id", "customer-1")
     db_customer_key = PiiMappingKey("trino", "customer_id", "customer-2")
-    cache = InMemoryPiiMappingCache(max_size=10)
+    cache = InMemoryPiiMappingCache()
     cache.set_many(
         {
             cached_customer_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
@@ -172,7 +174,7 @@ async def test_query_audits_missing_pii_mappings() -> None:
         trino=FakeTrinoClient([{"customer_id": "missing-customer"}]),
         pii_mappings=FakePiiMappingRepository({}),
         audit_logs=audit_repo,
-        mapping_cache=InMemoryPiiMappingCache(max_size=10),
+        mapping_cache=InMemoryPiiMappingCache(),
         uow=uow,
     )
 
@@ -206,6 +208,28 @@ async def test_query_audits_missing_pii_mappings() -> None:
 
 
 @pytest.mark.asyncio
+async def test_query_does_not_reload_keys_in_temporary_missing_cache() -> None:
+    mapping_repo = FakePiiMappingRepository({})
+    service = DataQueryService(
+        settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
+        trino=FakeTrinoClient([{"customer_id": "missing-customer"}]),
+        pii_mappings=mapping_repo,
+        audit_logs=FakeAuditLogRepository(),
+        mapping_cache=InMemoryPiiMappingCache(
+            missing_ttl_seconds=60,
+        ),
+        uow=FakeUnitOfWork(),
+    )
+
+    await service.list_users(actor=make_user(), limit=100, offset=0)
+    await service.list_users(actor=make_user(), limit=100, offset=0)
+
+    assert mapping_repo.requests == [
+        {PiiMappingKey("trino", "customer_id", "missing-customer")}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
     trino = FakeTrinoClient([{"stt": 1, "accountid": "VNH001234567890X"}])
     account_key = PiiMappingKey("trino", "customer_id", "VNH001234567890")
@@ -219,7 +243,7 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
         trino=trino,
         pii_mappings=mapping_repo,
         audit_logs=FakeAuditLogRepository(),
-        mapping_cache=InMemoryPiiMappingCache(max_size=10),
+        mapping_cache=InMemoryPiiMappingCache(),
         uow=FakeUnitOfWork(),
     )
 
@@ -271,7 +295,7 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
         trino=trino,
         pii_mappings=mapping_repo,
         audit_logs=FakeAuditLogRepository(),
-        mapping_cache=InMemoryPiiMappingCache(max_size=10),
+        mapping_cache=InMemoryPiiMappingCache(),
         uow=FakeUnitOfWork(),
     )
 

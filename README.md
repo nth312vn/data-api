@@ -27,10 +27,16 @@ Flow:
 1. A client calls a route such as `GET /api/v1/data/users`.
 2. The service builds the Trino SQL internally from fixed route config.
 3. The service collects route-owned PII token fields such as `customer_id`.
-4. It resolves mappings from the in-memory cache first.
-5. Cache misses are loaded from the separate PII mapping database.
-6. The PII database can contain many mapping tables with different schemas, modeled in `app/pii_models`.
-7. The main application database only stores audit logs. If a mapping is still missing, the service writes an `audit_logs` record with `event_type=pii_mapping_missing`.
+4. At application startup, mapping tables are snapshotted into the independent
+   in-memory PII cache using bounded, keyset-paginated queries.
+5. It resolves mappings from that in-memory cache first. Request misses are loaded
+   from the separate PII mapping database in bounded batches and added to the cache.
+   Cache entries are keyed by PII type and token, so every source system shares the
+   same mapping instead of creating a separate cache entry per system.
+6. Keys absent from the PII database are held in a temporary negative cache. Until
+   its TTL expires, repeated requests for only those keys do not query the PII DB.
+7. The PII database can contain many mapping tables with different schemas, modeled in `app/pii_models`.
+8. The main application database only stores audit logs. If a mapping is still missing, the service writes an `audit_logs` record with `event_type=pii_mapping_missing`.
 
 Example:
 
@@ -162,7 +168,8 @@ Important variables:
 - `REFRESH_TOKEN_EXPIRE_MINUTES`: refresh token lifetime.
 - `CORS_ORIGINS`: comma-separated allowed origins.
 - `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_PASSWORD`, `TRINO_HTTP_SCHEME`: Trino connection settings.
-- `PII_MAPPING_CACHE_MAX_SIZE`: maximum number of mapping entries held in process memory.
+- `PII_MAPPING_MISSING_TTL_SECONDS`: TTL for keys confirmed absent from the PII database.
+- `PII_MAPPING_SNAPSHOT_BATCH_SIZE`: maximum row/key count per PII database query.
 
 Trino queries run through the SQLAlchemy dialect provided by `trino[sqlalchemy]`.
 

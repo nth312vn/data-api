@@ -8,7 +8,10 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
-from app.dependencies.services import close_trino_client
+from app.dependencies.services import (
+    close_trino_client,
+    initialize_pii_mapping_cache,
+)
 from app.middlewares.request_id import RequestIDMiddleware
 
 
@@ -16,6 +19,14 @@ from app.middlewares.request_id import RequestIDMiddleware
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger = get_logger(__name__)
     logger.info("application_starting")
+    settings = get_settings()
+    loaded, cached = await initialize_pii_mapping_cache(settings)
+    logger.info(
+        "pii_mapping_cache_initialized loaded=%d cached=%d batch_size=%d",
+        loaded,
+        cached,
+        settings.pii_mapping_snapshot_batch_size,
+    )
     try:
         yield
     finally:

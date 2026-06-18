@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     trino_password: SecretStr | None = None
     trino_http_scheme: str = "http"
 
-    pii_mapping_cache_max_size: int = 10_000
+    pii_mapping_missing_ttl_seconds: float = Field(default=60.0, gt=0)
+    pii_mapping_snapshot_batch_size: int = Field(default=500, gt=0)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

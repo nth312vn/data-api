@@ -1,6 +1,7 @@
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.dependencies.database import get_db_session, get_pii_db_session
 from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.authorization import AuthorizationRepository
@@ -26,8 +27,12 @@ def get_authorization_repository(
 
 def get_pii_mapping_repository(
     session: AsyncSession = Depends(get_pii_db_session),
+    settings: Settings = Depends(get_settings),
 ) -> PiiMappingRepository:
-    return SQLAlchemyPiiMappingRepository(session=session)
+    return SQLAlchemyPiiMappingRepository(
+        session=session,
+        query_batch_size=settings.pii_mapping_snapshot_batch_size,
+    )
 
 
 def get_audit_log_repository(

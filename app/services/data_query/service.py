@@ -236,9 +236,14 @@ class DataQueryService:
     ) -> dict[PiiMappingKey, str]:
         cached = self.mapping_cache.get_many(keys)
         missing_cache_keys = keys - set(cached)
-        db_mappings = await self.pii_mappings.get_many(missing_cache_keys)
+        keys_to_load = self.mapping_cache.keys_to_load(missing_cache_keys)
+        if not keys_to_load:
+            return cached
+
+        db_mappings = await self.pii_mappings.get_many(keys_to_load)
         db_values = {key: mapping.mapped_value for key, mapping in db_mappings.items()}
         self.mapping_cache.set_many(db_values)
+        self.mapping_cache.mark_missing(keys_to_load - set(db_values))
         return {**cached, **db_values}
 
     def _apply_resolved_mappings(
@@ -250,9 +255,7 @@ class DataQueryService:
         for key, mapped_value in mapped_values.items():
             references = mapping_plan.references_by_key.get(key, ())
             for reference in references:
-                mapping_plan.rows[reference.row_index][reference.field] = (
-                    mapped_value
-                )
+                mapping_plan.rows[reference.row_index][reference.field] = mapped_value
 
     def _mapping_key_for_field(
         self,

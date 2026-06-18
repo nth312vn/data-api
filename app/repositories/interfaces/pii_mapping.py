@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -20,3 +21,11 @@ class PiiMappingRepository(Protocol):
         self,
         keys: set[PiiMappingKey],
     ) -> dict[PiiMappingKey, PiiMappingRecord]: ...
+
+
+class PiiMappingSnapshotRepository(Protocol):
+    def iter_snapshot_batches(
+        self,
+        *,
+        batch_size: int,
+    ) -> AsyncIterator[dict[PiiMappingKey, PiiMappingRecord]]: ...

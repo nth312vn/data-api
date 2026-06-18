@@ -9,15 +9,18 @@ from app.dependencies.repositories import (
     get_user_repository,
 )
 from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.infrastructure.pii_database.session import PiiAsyncSessionFactory
 from app.infrastructure.trino.client import TrinoClient, TrinoPythonClient
 from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.authorization import AuthorizationRepository
 from app.repositories.interfaces.pii_mapping import PiiMappingRepository
 from app.repositories.interfaces.user import UserRepository
+from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
 from app.services.auth import AuthService
 from app.services.authorization import AuthorizationService
 from app.services.data_query import DataQueryService
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
+from app.services.pii_mapping_snapshot import load_pii_mapping_snapshot
 from app.services.user import UserService
 
 _pii_mapping_cache: InMemoryPiiMappingCache | None = None
@@ -87,9 +90,24 @@ def get_pii_mapping_cache(
     global _pii_mapping_cache
     if _pii_mapping_cache is None:
         _pii_mapping_cache = InMemoryPiiMappingCache(
-            max_size=settings.pii_mapping_cache_max_size,
+            missing_ttl_seconds=settings.pii_mapping_missing_ttl_seconds,
         )
     return _pii_mapping_cache
+
+
+async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
+    cache = get_pii_mapping_cache(settings)
+    async with PiiAsyncSessionFactory() as session:
+        repository = SQLAlchemyPiiMappingRepository(
+            session=session,
+            query_batch_size=settings.pii_mapping_snapshot_batch_size,
+        )
+        loaded = await load_pii_mapping_snapshot(
+            repository=repository,
+            cache=cache,
+            batch_size=settings.pii_mapping_snapshot_batch_size,
+        )
+    return loaded, cache.size
 
 
 def get_data_query_service(
