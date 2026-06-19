@@ -5,7 +5,6 @@ from typing import Protocol
 
 @dataclass(frozen=True, slots=True)
 class PiiMappingKey:
-    source_system: str
     pii_type: str
     token: str
 

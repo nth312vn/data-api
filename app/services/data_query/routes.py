@@ -36,7 +36,6 @@ class PiiFieldMappingRule:
 @dataclass(frozen=True, slots=True)
 class DataRouteSpec:
     route_name: str
-    source_system: str
     statement: str | Executable
     pii_fields: tuple[str, ...]
     pii_field_rules: Mapping[str, PiiFieldMappingRule] = field(default_factory=dict)

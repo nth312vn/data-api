@@ -4,7 +4,6 @@ from pydantic import BaseModel
 
 
 class MissingPiiMapping(BaseModel):
-    source_system: str
     pii_type: str
     token: str
 

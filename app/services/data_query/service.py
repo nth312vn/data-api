@@ -56,7 +56,6 @@ class DataQueryService:
     ) -> DataRowsResponse:
         spec = DataRouteSpec(
             route_name="data.users",
-            source_system="trino",
             statement=build_users_query(limit=limit, offset=offset),
             pii_fields=("customer_id",),
         )
@@ -75,7 +74,6 @@ class DataQueryService:
     ) -> DataRowsResponse:
         spec = DataRouteSpec(
             route_name="power_bi.deeplink_1",
-            source_system="trino",
             statement=build_power_bi_deeplink_query(
                 event_key="topup_result",
                 start_date=start_date,
@@ -110,7 +108,6 @@ class DataQueryService:
     ) -> DataRowsResponse:
         spec = DataRouteSpec(
             route_name="power_bi.deeplink_2",
-            source_system="trino",
             statement=build_power_bi_deeplink_query(
                 event_key="topup_bank_app",
                 start_date=start_date,
@@ -145,13 +142,12 @@ class DataQueryService:
 
         missing_mappings = [
             MissingPiiMapping(
-                source_system=key.source_system,
                 pii_type=key.pii_type,
                 token=key.token,
             )
             for key in sorted(
                 missing_keys,
-                key=lambda key: (key.source_system, key.pii_type, key.token),
+                key=lambda key: (key.pii_type, key.token),
             )
         ]
 
@@ -184,13 +180,15 @@ class DataQueryService:
 
         for field in spec.pii_fields:
             field_keys = [
-                self._mapping_key_for_field(
-                    spec=spec,
-                    field=field,
-                    value=row.get(field),
+                (
+                    self._mapping_key_for_field(
+                        spec=spec,
+                        field=field,
+                        value=row.get(field),
+                    )
+                    if row.get(field) is not None
+                    else None
                 )
-                if row.get(field) is not None
-                else None
                 for row in rows
             ]
             keys_by_field[field] = field_keys
@@ -245,9 +243,7 @@ class DataQueryService:
         for record in merged_records:
             row_index = int(record.pop(row_id_column))
             mapped_rows.append(
-                {
-                    field: record[field] for field in rows[row_index]
-                },
+                {field: record[field] for field in rows[row_index]},
             )
 
         return mapped_rows, requested_keys - set(mapped_values)
@@ -281,7 +277,6 @@ class DataQueryService:
         rule = spec.pii_field_rules.get(field)
         if rule is None:
             return PiiMappingKey(
-                source_system=spec.source_system,
                 pii_type=field,
                 token=value_string,
             )
@@ -291,7 +286,6 @@ class DataQueryService:
             return None
 
         return PiiMappingKey(
-            source_system=spec.source_system,
             pii_type=rule.pii_type,
             token=token,
         )
@@ -337,7 +331,6 @@ class DataQueryService:
                 username=actor.username,
                 api_route=spec.route_name,
                 parameters={
-                    "source_system": spec.source_system,
                     "missing_mappings": [
                         mapping.model_dump() for mapping in missing_mappings
                     ],

@@ -82,7 +82,6 @@ async def test_pii_mapping_repository_uses_model_specific_table_and_columns() ->
     )
 
     key = PiiMappingKey(
-        source_system="trino",
         pii_type="customer_id",
         token="customer-1",
     )
@@ -103,9 +102,7 @@ async def test_pii_mapping_repository_splits_misses_into_bounded_batches() -> No
         mapping_models={"customer_id": CustomerIdentityPiiMapping},
         query_batch_size=2,
     )
-    keys = {
-        PiiMappingKey("trino", "customer_id", f"customer-{index}") for index in range(5)
-    }
+    keys = {PiiMappingKey("customer_id", f"customer-{index}") for index in range(5)}
 
     await repository.get_many(keys)
 

@@ -9,7 +9,7 @@ from app.services.pii_mapping_snapshot import load_pii_mapping_snapshot
 
 def test_missing_keys_are_loadable_again_after_ttl() -> None:
     now = [100.0]
-    key = PiiMappingKey("trino", "customer_id", "missing")
+    key = PiiMappingKey("customer_id", "missing")
     cache = InMemoryPiiMappingCache(
         missing_ttl_seconds=30,
         clock=lambda: now[0],
@@ -23,7 +23,7 @@ def test_missing_keys_are_loadable_again_after_ttl() -> None:
 
 
 def test_value_update_removes_key_from_missing_cache() -> None:
-    key = PiiMappingKey("trino", "customer_id", "customer-1")
+    key = PiiMappingKey("customer_id", "customer-1")
     cache = InMemoryPiiMappingCache()
     cache.mark_missing({key})
 
@@ -53,9 +53,9 @@ class FakeSnapshotRepository:
 
 @pytest.mark.asyncio
 async def test_snapshot_replaces_cache_and_loads_each_batch() -> None:
-    old_key = PiiMappingKey("trino", "customer_id", "old")
-    first_key = PiiMappingKey("trino", "customer_id", "customer-1")
-    second_key = PiiMappingKey("trino", "customer_id", "customer-2")
+    old_key = PiiMappingKey("customer_id", "old")
+    first_key = PiiMappingKey("customer_id", "customer-1")
+    second_key = PiiMappingKey("customer_id", "customer-2")
     cache = InMemoryPiiMappingCache()
     cache.set_many({old_key: "old-uuid"})
     repository = FakeSnapshotRepository(
@@ -82,22 +82,22 @@ async def test_snapshot_replaces_cache_and_loads_each_batch() -> None:
     assert repository.batch_size == 2
 
 
-def test_mapping_cache_is_shared_across_source_systems() -> None:
-    trino_key = PiiMappingKey("trino", "customer_id", "customer-1")
-    crm_key = PiiMappingKey("crm", "customer_id", "customer-1")
+def test_mapping_cache_separates_pii_types() -> None:
+    customer_key = PiiMappingKey("customer_id", "shared-token")
+    phone_key = PiiMappingKey("phone", "shared-token")
     cache = InMemoryPiiMappingCache()
 
-    cache.set_many({trino_key: "uuid-1"})
+    cache.set_many({customer_key: "uuid-1"})
 
-    assert cache.get_many({crm_key}) == {crm_key: "uuid-1"}
+    assert cache.get_many({customer_key, phone_key}) == {customer_key: "uuid-1"}
     assert cache.size == 1
 
 
-def test_missing_key_cache_is_shared_across_source_systems() -> None:
-    trino_key = PiiMappingKey("trino", "customer_id", "missing")
-    crm_key = PiiMappingKey("crm", "customer_id", "missing")
+def test_missing_key_cache_separates_pii_types() -> None:
+    customer_key = PiiMappingKey("customer_id", "missing")
+    phone_key = PiiMappingKey("phone", "missing")
     cache = InMemoryPiiMappingCache()
 
-    cache.mark_missing({trino_key})
+    cache.mark_missing({customer_key})
 
-    assert cache.keys_to_load({crm_key}) == set()
+    assert cache.keys_to_load({customer_key, phone_key}) == {phone_key}
