@@ -46,8 +46,9 @@ curl "http://localhost:8000/api/v1/data/users?limit=100&offset=0" \
   -H "Authorization: Bearer <access_token>"
 ```
 
-Power BI deeplink routes use `GET`. When dates are omitted, both default to the
-current date. When `limit` is omitted, the response is not limited. Deeplink
+Power BI deeplink routes use `GET`. When dates are omitted, `start_date` defaults
+to yesterday and `end_date` defaults to the current date. When `limit` is
+omitted, the response is not limited. Deeplink
 `segmentation`, `user_agent`, and `limit` filters run in Trino before records are
 returned. `customer_id` runs after PII mapping and accepts the mapped customer
 UUID. Repeated values and comma-separated values are both supported. A

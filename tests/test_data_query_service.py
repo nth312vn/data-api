@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -111,10 +111,10 @@ def test_power_bi_request_normalizes_customer_ids() -> None:
     assert request.user_agent == ["Android", "Dalvik"]
 
 
-def test_power_bi_request_defaults_to_today_without_limit() -> None:
+def test_power_bi_request_defaults_to_yesterday_through_today_without_limit() -> None:
     request = PowerBiDeeplinkRequest()
 
-    assert request.start_date == date.today()
+    assert request.start_date == date.today() - timedelta(days=1)
     assert request.end_date == date.today()
     assert request.limit is None
 

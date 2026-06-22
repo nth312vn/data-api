@@ -6,7 +6,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_data_query_service
 from app.models.user import User
 from app.schemas.data_query import DataRowsResponse
-from app.schemas.power_bi import PowerBiDeeplinkRequest
+from app.schemas.power_bi import PowerBiDeeplinkRequest, default_start_date
 from app.services.data_query import DataQueryService
 
 router = APIRouter()
@@ -14,8 +14,8 @@ router = APIRouter()
 
 @router.get("/deeplink_1", response_model=DataRowsResponse)
 async def get_deeplink_1(
-    start_date: date | None = Query(default=None),
-    end_date: date | None = Query(default=None),
+    start_date: date | None = Query(default_factory=default_start_date),
+    end_date: date | None = Query(default_factory=date.today),
     limit: int | None = Query(default=None, ge=1),
     segmentation: list[str] = Query(default_factory=list),
     user_agent: list[str] = Query(default_factory=list),
@@ -24,15 +24,13 @@ async def get_deeplink_1(
     service: DataQueryService = Depends(get_data_query_service),
 ) -> DataRowsResponse:
     request_data: dict[str, object] = {
+        "start_date": (start_date if start_date is not None else default_start_date()),
+        "end_date": end_date if end_date is not None else date.today(),
         "limit": limit,
         "segmentation": segmentation,
         "user_agent": user_agent,
         "customer_id": customer_id,
     }
-    if start_date is not None:
-        request_data["start_date"] = start_date
-    if end_date is not None:
-        request_data["end_date"] = end_date
     request = PowerBiDeeplinkRequest.model_validate(request_data)
     return await service.power_bi_deeplink_1(
         actor=current_user,
@@ -47,8 +45,8 @@ async def get_deeplink_1(
 
 @router.get("/deeplink_2", response_model=DataRowsResponse)
 async def get_deeplink_2(
-    start_date: date | None = Query(default=None),
-    end_date: date | None = Query(default=None),
+    start_date: date | None = Query(default_factory=default_start_date),
+    end_date: date | None = Query(default_factory=date.today),
     limit: int | None = Query(default=None, ge=1),
     segmentation: list[str] = Query(default_factory=list),
     user_agent: list[str] = Query(default_factory=list),
@@ -57,15 +55,13 @@ async def get_deeplink_2(
     service: DataQueryService = Depends(get_data_query_service),
 ) -> DataRowsResponse:
     request_data: dict[str, object] = {
+        "start_date": (start_date if start_date is not None else default_start_date()),
+        "end_date": end_date if end_date is not None else date.today(),
         "limit": limit,
         "segmentation": segmentation,
         "user_agent": user_agent,
         "customer_id": customer_id,
     }
-    if start_date is not None:
-        request_data["start_date"] = start_date
-    if end_date is not None:
-        request_data["end_date"] = end_date
     request = PowerBiDeeplinkRequest.model_validate(request_data)
     return await service.power_bi_deeplink_2(
         actor=current_user,

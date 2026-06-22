@@ -1,11 +1,15 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Self
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
+def default_start_date() -> date:
+    return date.today() - timedelta(days=1)
+
+
 class PowerBiDeeplinkRequest(BaseModel):
-    start_date: date = Field(default_factory=date.today)
+    start_date: date = Field(default_factory=default_start_date)
     end_date: date = Field(default_factory=date.today)
     limit: int | None = Field(default=None, ge=1)
     segmentation: list[str] = Field(default_factory=list)
