@@ -25,6 +25,7 @@ class InMemoryPiiMappingCache:
         self._clock = clock
         self._items: dict[_PiiCacheKey, str] = {}
         self._missing_until: dict[_PiiCacheKey, float] = {}
+        self._next_missing_expiry: float | None = None
 
     def get_many(self, keys: set[PiiMappingKey]) -> dict[PiiMappingKey, str]:
         values: dict[PiiMappingKey, str] = {}
@@ -44,32 +45,55 @@ class InMemoryPiiMappingCache:
     def keys_to_load(self, keys: set[PiiMappingKey]) -> set[PiiMappingKey]:
         """Return keys that are not covered by the temporary missing-key cache."""
         now = self._clock()
+        self._clear_expired_missing(now)
         keys_to_load: set[PiiMappingKey] = set()
         for key in keys:
             cache_key = self._cache_key(key)
             missing_until = self._missing_until.get(cache_key)
             if missing_until is None:
                 keys_to_load.add(key)
-                continue
-            if missing_until <= now:
-                self._missing_until.pop(cache_key, None)
-                keys_to_load.add(key)
         return keys_to_load
 
     def mark_missing(self, keys: set[PiiMappingKey]) -> None:
-        missing_until = self._clock() + self.missing_ttl_seconds
+        now = self._clock()
+        self._clear_expired_missing(now)
+        missing_until = now + self.missing_ttl_seconds
         for key in keys:
             cache_key = self._cache_key(key)
             if cache_key not in self._items:
                 self._missing_until[cache_key] = missing_until
+                if (
+                    self._next_missing_expiry is None
+                    or missing_until < self._next_missing_expiry
+                ):
+                    self._next_missing_expiry = missing_until
 
     def clear(self) -> None:
         self._items.clear()
         self._missing_until.clear()
+        self._next_missing_expiry = None
 
     @property
     def size(self) -> int:
         return len(self._items)
+
+    @property
+    def missing_size(self) -> int:
+        return len(self._missing_until)
+
+    def _clear_expired_missing(self, now: float) -> None:
+        if self._next_missing_expiry is None or self._next_missing_expiry > now:
+            return
+
+        self._missing_until = {
+            key: missing_until
+            for key, missing_until in self._missing_until.items()
+            if missing_until > now
+        }
+        self._next_missing_expiry = min(
+            self._missing_until.values(),
+            default=None,
+        )
 
     def _cache_key(self, key: PiiMappingKey) -> _PiiCacheKey:
         return _PiiCacheKey(pii_type=key.pii_type, token=key.token)

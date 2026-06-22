@@ -22,6 +22,26 @@ def test_missing_keys_are_loadable_again_after_ttl() -> None:
     assert cache.keys_to_load({key}) == {key}
 
 
+def test_expired_missing_keys_are_pruned_during_unrelated_lookup() -> None:
+    now = [100.0]
+    expired_key = PiiMappingKey("customer_id", "expired")
+    active_key = PiiMappingKey("customer_id", "active")
+    unrelated_key = PiiMappingKey("customer_id", "unrelated")
+    cache = InMemoryPiiMappingCache(
+        missing_ttl_seconds=30,
+        clock=lambda: now[0],
+    )
+    cache.mark_missing({expired_key})
+    now[0] = 110.0
+    cache.mark_missing({active_key})
+
+    now[0] = 130.0
+
+    assert cache.keys_to_load({unrelated_key}) == {unrelated_key}
+    assert cache.missing_size == 1
+    assert cache.keys_to_load({active_key}) == set()
+
+
 def test_value_update_removes_key_from_missing_cache() -> None:
     key = PiiMappingKey("customer_id", "customer-1")
     cache = InMemoryPiiMappingCache()
