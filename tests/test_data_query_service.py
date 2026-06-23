@@ -386,7 +386,7 @@ async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
     assert "lower(element_at(hive.wh_cpm.cpm_event_raw.segmentation" in trino.sql
     assert "lower(CASE WHEN" in trino.sql
     assert " LIMIT " in trino.sql
-    assert trino.params["element_at_4"] == "bank_name"
+    assert "bank_name" in trino.params.values()
     assert trino.params["lower_5"] == ["vcb"]
     assert trino.params["lower_6"] == ["ios", "android"]
     assert trino.params["param_4"] == 1

@@ -51,6 +51,7 @@ def build_power_bi_deeplink_query(
     segmentation = event_raw.c["segmentation"]
     account_id = event_raw.c["accountid"]
     user_agent = event_raw.c["user_agent"]
+    bank_name = func.element_at(segmentation, "bank_name")
     device = case(
         (
             or_(
@@ -81,7 +82,7 @@ def build_power_bi_deeplink_query(
         conditions.append(func.element_at(segmentation, "status") == status)
     if segmentation_filters:
         conditions.append(
-            func.lower(func.element_at(segmentation, "bank_name")).in_(
+            func.lower(bank_name).in_(
                 [value.casefold() for value in segmentation_filters],
             ),
         )
@@ -99,7 +100,7 @@ def build_power_bi_deeplink_query(
                 func.from_unixtime(event_timestamp / 1000),
                 "%Y-%m-%d %H:%i:%s",
             ).label("event_time"),
-            func.element_at(segmentation, "bank_name").label("bank_name"),
+            bank_name.label("bank_name"),
             account_id,
             customer.c["c_cust_full_name"],
             device.label("device"),

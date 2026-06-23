@@ -4,6 +4,8 @@ import sys
 import traceback
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 request_id_context: ContextVar[str | None] = ContextVar(
@@ -79,19 +81,48 @@ class JsonFormatter(logging.Formatter):
         )
 
 
-def configure_logging(level: str, *, log_format: str = "text") -> None:
-    level_name = level.upper()
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    root_logger.setLevel(level_name)
-
-    handler = logging.StreamHandler(sys.stdout)
+def _build_handler(handler: logging.Handler, *, log_format: str) -> logging.Handler:
     handler.addFilter(RequestIdFilter())
     if log_format.lower() == "json":
         handler.setFormatter(JsonFormatter())
     else:
         handler.setFormatter(TextFormatter())
-    root_logger.addHandler(handler)
+    return handler
+
+
+def configure_logging(
+    level: str,
+    *,
+    log_format: str = "text",
+    log_file_path: str | None = None,
+    log_file_max_mb: int = 10,
+    log_file_backup_count: int = 5,
+) -> None:
+    level_name = level.upper()
+    root_logger = logging.getLogger()
+    for existing_handler in root_logger.handlers[:]:
+        root_logger.removeHandler(existing_handler)
+        existing_handler.close()
+    root_logger.setLevel(level_name)
+
+    root_logger.addHandler(
+        _build_handler(logging.StreamHandler(sys.stdout), log_format=log_format),
+    )
+
+    if log_file_path:
+        file_path = Path(log_file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        root_logger.addHandler(
+            _build_handler(
+                RotatingFileHandler(
+                    file_path,
+                    maxBytes=log_file_max_mb * 1024 * 1024,
+                    backupCount=log_file_backup_count,
+                    encoding="utf-8",
+                ),
+                log_format=log_format,
+            ),
+        )
 
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(logger_name)

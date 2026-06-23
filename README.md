@@ -168,6 +168,9 @@ Important variables:
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: short-lived access token lifetime.
 - `REFRESH_TOKEN_EXPIRE_MINUTES`: refresh token lifetime.
 - `CORS_ORIGINS`: comma-separated allowed origins.
+- `LOG_LEVEL`, `LOG_FORMAT`: application logging level and output format.
+- `LOG_FILE_PATH`: optional file path for application logs. Leave empty to disable file logging.
+- `LOG_FILE_MAX_MB`, `LOG_FILE_BACKUP_COUNT`: rotating file log size in MB and backup count.
 - `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_PASSWORD`, `TRINO_HTTP_SCHEME`: Trino connection settings.
 - `PII_MAPPING_MISSING_TTL_SECONDS`: TTL for keys confirmed absent from the PII database.
 - `PII_MAPPING_SNAPSHOT_BATCH_SIZE`: maximum row/key count per PII database query.
