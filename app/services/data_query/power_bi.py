@@ -51,6 +51,23 @@ def build_power_bi_deeplink_query(
     segmentation = event_raw.c["segmentation"]
     account_id = event_raw.c["accountid"]
     user_agent = event_raw.c["user_agent"]
+    device = case(
+        (
+            or_(
+                func.lower(user_agent).like("%android%"),
+                func.lower(user_agent).like("%dalvik%"),
+            ),
+            "Android",
+        ),
+        (
+            or_(
+                func.lower(user_agent).like("%cfnetwork%"),
+                func.lower(user_agent).like("%darwin%"),
+            ),
+            "iOS",
+        ),
+        else_="Other",
+    )
 
     conditions = [
         event_raw.c["key"] == event_key,
@@ -70,14 +87,8 @@ def build_power_bi_deeplink_query(
         )
     if user_agent_filters:
         conditions.append(
-            or_(
-                *(
-                    func.lower(user_agent).contains(
-                        filter_value.casefold(),
-                        autoescape=True,
-                    )
-                    for filter_value in user_agent_filters
-                ),
+            func.lower(device).in_(
+                [filter_value.casefold() for filter_value in user_agent_filters],
             ),
         )
 
@@ -91,23 +102,7 @@ def build_power_bi_deeplink_query(
             func.element_at(segmentation, "bank_name").label("bank_name"),
             account_id,
             customer.c["c_cust_full_name"],
-            case(
-                (
-                    or_(
-                        func.lower(user_agent).like("%android%"),
-                        func.lower(user_agent).like("%dalvik%"),
-                    ),
-                    "Android",
-                ),
-                (
-                    or_(
-                        func.lower(user_agent).like("%cfnetwork%"),
-                        func.lower(user_agent).like("%darwin%"),
-                    ),
-                    "iOS",
-                ),
-                else_="Other",
-            ).label("device"),
+            device.label("device"),
         )
         .select_from(
             event_raw.outerjoin(

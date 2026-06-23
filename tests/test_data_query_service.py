@@ -369,7 +369,7 @@ async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
         end_date=date(2026, 6, 2),
         limit=1,
         segmentation_filters=("VCB",),
-        user_agent_filters=("android",),
+        user_agent_filters=("IOS", "android"),
         customer_ids=(first_uuid,),
     )
 
@@ -384,9 +384,9 @@ async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
     assert trino.sql is not None
     assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
     assert "lower(element_at(hive.wh_cpm.cpm_event_raw.segmentation" in trino.sql
-    assert "lower(hive.wh_cpm.cpm_event_raw.user_agent) LIKE" in trino.sql
+    assert "lower(CASE WHEN" in trino.sql
     assert " LIMIT " in trino.sql
     assert trino.params["element_at_4"] == "bank_name"
     assert trino.params["lower_5"] == ["vcb"]
-    assert trino.params["lower_6"] == "android"
+    assert trino.params["lower_6"] == ["ios", "android"]
     assert trino.params["param_4"] == 1

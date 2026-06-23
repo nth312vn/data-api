@@ -52,7 +52,9 @@ omitted, the response is not limited. Deeplink
 `segmentation`, `user_agent`, and `limit` filters run in Trino before records are
 returned. `customer_id` runs after PII mapping and accepts the mapped customer
 UUID. Repeated values and comma-separated values are both supported. A
-`segmentation` value is matched against `segmentation['bank_name']`.
+`segmentation` value is matched against `segmentation['bank_name']`. A
+`user_agent` value is matched against the transformed `device` value, such as
+`Android`, `iOS`, or `Other`.
 
 ```bash
 curl --get http://localhost:8000/api/v1/power_bi/deeplink_1 \
