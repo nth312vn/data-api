@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.v1.endpoints.power_bi import get_deeplink_1, router
+from app.core.exceptions import register_exception_handlers
 from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_data_query_service
 from app.models.user import User, UserRole
@@ -50,6 +51,47 @@ def test_deeplink_query_defaults_to_yesterday_through_today() -> None:
     assert service.arguments["start_date"] == (
         service.arguments["end_date"] - timedelta(days=1)
     )
+
+
+def test_deeplink_pydantic_validation_error_uses_request_error_format() -> None:
+    service = RecordingDataQueryService()
+    user = User(
+        id=uuid4(),
+        email=None,
+        username="power_bi",
+        hashed_password="hash",
+        role=UserRole.user,
+    )
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_data_query_service] = lambda: service
+
+    response = TestClient(app).get(
+        "/deeplink_1",
+        params={"start_date": "2026-06-02", "end_date": "2026-06-01"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "validation_error"
+    assert body["error"]["message"] == "Invalid request payload"
+    assert body["error"]["details"]["errors"] == [
+        {
+            "field": "request",
+            "message": "Value error, start_date must be before or equal to end_date",
+            "type": "value_error",
+            "input": {
+                "start_date": "2026-06-02",
+                "end_date": "2026-06-01",
+                "limit": None,
+                "segmentation": [],
+                "user_agent": [],
+                "customer_id": [],
+            },
+        },
+    ]
 
 
 @pytest.mark.asyncio

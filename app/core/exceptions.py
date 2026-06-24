@@ -1,3 +1,4 @@
+from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from typing import Any
 
@@ -5,6 +6,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -92,6 +94,40 @@ def _decode_bytes(value: bytes) -> str:
     return value.decode("utf-8", errors="replace")
 
 
+def validation_error_details(
+    errors: Sequence[Mapping[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    return {"errors": [_format_validation_error(error) for error in errors]}
+
+
+def _format_validation_error(error: Mapping[str, Any]) -> dict[str, Any]:
+    loc = _normalize_error_location(error.get("loc", ()))
+    field_parts = [
+        str(part)
+        for part in loc
+        if str(part) not in {"body", "query", "path", "header", "cookie"}
+    ]
+    field = ".".join(field_parts) if field_parts else "request"
+    formatted_error: dict[str, Any] = {
+        "field": field,
+        "message": str(error.get("msg", "Invalid value")),
+        "type": str(error.get("type", "value_error")),
+    }
+    if "input" in error:
+        formatted_error["input"] = error["input"]
+    return formatted_error
+
+
+def _normalize_error_location(value: Any) -> tuple[Any, ...]:
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list):
+        return tuple(value)
+    if value:
+        return (value,)
+    return ()
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_exception(
@@ -116,7 +152,20 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             code="validation_error",
             message="Invalid request payload",
-            details={"errors": exc.errors()},
+            details=validation_error_details(exc.errors()),
+        )
+
+    @app.exception_handler(ValidationError)
+    async def handle_pydantic_validation_exception(
+        request: Request,
+        exc: ValidationError,
+    ) -> JSONResponse:
+        return error_response(
+            request=request,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="validation_error",
+            message="Invalid request payload",
+            details=validation_error_details(exc.errors()),
         )
 
     @app.exception_handler(StarletteHTTPException)

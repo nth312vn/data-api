@@ -26,4 +26,7 @@ def test_validation_error_response_serializes_bytes_input() -> None:
     assert response.status_code == 422
     body = response.json()
     assert body["error"]["code"] == "validation_error"
-    assert isinstance(body["error"]["details"]["errors"][0]["input"], str)
+    error = body["error"]["details"]["errors"][0]
+    assert error["field"] == "request"
+    assert error["type"] == "model_attributes_type"
+    assert isinstance(error["input"], str)
