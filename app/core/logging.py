@@ -111,18 +111,25 @@ def configure_logging(
 
     if log_file_path:
         file_path = Path(log_file_path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        root_logger.addHandler(
-            _build_handler(
-                RotatingFileHandler(
-                    file_path,
-                    maxBytes=log_file_max_mb * 1024 * 1024,
-                    backupCount=log_file_backup_count,
-                    encoding="utf-8",
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            root_logger.addHandler(
+                _build_handler(
+                    RotatingFileHandler(
+                        file_path,
+                        maxBytes=log_file_max_mb * 1024 * 1024,
+                        backupCount=log_file_backup_count,
+                        encoding="utf-8",
+                    ),
+                    log_format=log_format,
                 ),
-                log_format=log_format,
-            ),
-        )
+            )
+        except OSError as exc:
+            root_logger.warning(
+                "file_logging_disabled path=%s error=%s",
+                file_path,
+                exc,
+            )
 
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(logger_name)

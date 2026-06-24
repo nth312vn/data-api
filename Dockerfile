@@ -19,9 +19,11 @@ COPY scripts ./scripts
 
 RUN pip install --upgrade pip \
     && pip install ".[dev]" \
-    && chmod +x docker/entrypoint.sh scripts/run_migrations.sh
+    && chmod +x docker/entrypoint.sh scripts/run_migrations.sh \
+    && mkdir -p /var/log/data-api \
+    && chmod 1777 /var/log/data-api
 
-EXPOSE 8000
+EXPOSE 8000 9000
 
 ENTRYPOINT ["docker/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

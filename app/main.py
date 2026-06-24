@@ -8,6 +8,12 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
+from app.core.metrics import (
+    MetricsServer,
+    PrometheusMiddleware,
+    start_metrics_server,
+    stop_metrics_server,
+)
 from app.dependencies.services import (
     close_trino_client,
     initialize_pii_mapping_cache,
@@ -20,6 +26,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger = get_logger(__name__)
     logger.info("application_starting")
     settings = get_settings()
+    metrics_server: MetricsServer | None = None
+    if settings.metrics_enabled:
+        metrics_server = start_metrics_server(
+            host=settings.metrics_host,
+            port=settings.metrics_port,
+        )
+        logger.info(
+            "prometheus_metrics_server_started host=%s port=%d",
+            settings.metrics_host,
+            settings.metrics_port,
+        )
     loaded, cached = await initialize_pii_mapping_cache(settings)
     logger.info(
         "pii_mapping_cache_initialized loaded=%d cached=%d batch_size=%d",
@@ -30,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        stop_metrics_server(metrics_server)
         await close_trino_client()
         logger.info("application_stopping")
 
@@ -52,6 +70,7 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(PrometheusMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

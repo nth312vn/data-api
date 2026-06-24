@@ -100,6 +100,7 @@ The API will be available at:
 ```text
 http://localhost:8000
 http://localhost:8000/docs
+http://localhost:9000/metrics
 ```
 
 Run migrations manually:
@@ -169,8 +170,9 @@ Important variables:
 - `REFRESH_TOKEN_EXPIRE_MINUTES`: refresh token lifetime.
 - `CORS_ORIGINS`: comma-separated allowed origins.
 - `LOG_LEVEL`, `LOG_FORMAT`: application logging level and output format.
-- `LOG_FILE_PATH`: optional file path for application logs. Leave empty to disable file logging.
+- `LOG_FILE_PATH`: optional file path for application logs. Defaults to `/var/log/data-api/data-api.log`; leave empty to disable file logging.
 - `LOG_FILE_MAX_MB`, `LOG_FILE_BACKUP_COUNT`: rotating file log size in MB and backup count.
+- `METRICS_ENABLED`, `METRICS_HOST`, `METRICS_PORT`: Prometheus metrics server settings.
 - `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_PASSWORD`, `TRINO_HTTP_SCHEME`: Trino connection settings.
 - `PII_MAPPING_MISSING_TTL_SECONDS`: TTL for keys confirmed absent from the PII database.
 - `PII_MAPPING_SNAPSHOT_BATCH_SIZE`: maximum row/key count per PII database query.
@@ -271,6 +273,7 @@ For stricter production revocation, add a refresh-token table keyed by hashed `j
 
 - Exceptions are centralized and return safe JSON errors with request IDs.
 - Logs are JSON-formatted and include request IDs through context variables.
+- Prometheus metrics are exposed on the metrics port at `/metrics`.
 - The `users` table uses UUID primary keys and unique indexes for email and username values.
 - Route handlers are async and contain no business logic.
 - Services decide commit boundaries through a small unit-of-work abstraction.

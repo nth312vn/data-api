@@ -36,9 +36,13 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
     log_level: str = "INFO"
     log_format: str = "text"
-    log_file_path: str | None = "logs/data-api.log"
+    log_file_path: str | None = "/var/log/data-api/data-api.log"
     log_file_max_mb: int = Field(default=10, gt=0)
     log_file_backup_count: int = Field(default=5, ge=0)
+
+    metrics_enabled: bool = True
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = Field(default=9000, ge=1, le=65535)
 
     trino_host: str = "localhost"
     trino_port: int = 8080
