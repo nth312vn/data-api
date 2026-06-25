@@ -216,6 +216,20 @@ bash scripts/create_user.sh \
   --role user
 ```
 
+Reset an existing user's password:
+
+```bash
+bash scripts/reset_user_password.sh --username admin
+```
+
+When the password is omitted, the script generates and prints a temporary
+password. To set it explicitly without putting the password in shell history:
+
+```bash
+RESET_USER_PASSWORD='another-secure-password' \
+bash scripts/reset_user_password.sh --email admin@example.com
+```
+
 Login:
 
 ```bash
