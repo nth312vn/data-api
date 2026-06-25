@@ -230,6 +230,18 @@ RESET_USER_PASSWORD='another-secure-password' \
 bash scripts/reset_user_password.sh --email admin@example.com
 ```
 
+Delete an existing user:
+
+```bash
+bash scripts/delete_user.sh --username power_bi
+```
+
+The script asks for confirmation by default. For automation, pass `--yes`:
+
+```bash
+bash scripts/delete_user.sh --email power_bi@example.com --yes
+```
+
 Login:
 
 ```bash
