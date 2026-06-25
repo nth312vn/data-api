@@ -195,6 +195,27 @@ The script only creates or promotes an admin when the `users` table has no
 `role=admin` user. It uses `admin@example.com` / `admin` and prints a generated
 temporary password in the startup log.
 
+Create or update users manually:
+
+```bash
+bash scripts/create_user.sh \
+  --username admin \
+  --email admin@example.com \
+  --role admin
+```
+
+When `--password` is omitted, new users get a generated temporary password.
+For repeatable setup without putting the password in shell history, pass it via
+environment variable:
+
+```bash
+CREATE_USER_PASSWORD='a-very-secure-password' \
+bash scripts/create_user.sh \
+  --username power_bi \
+  --email power_bi@example.com \
+  --role user
+```
+
 Login:
 
 ```bash
