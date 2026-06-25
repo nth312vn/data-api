@@ -19,6 +19,9 @@ from app.dependencies.services import (
     initialize_pii_mapping_cache,
 )
 from app.middlewares.request_id import RequestIDMiddleware
+from app.middlewares.timeout import RequestTimeoutMiddleware
+
+API_REQUEST_TIMEOUT_SECONDS = 120.0
 
 
 @asynccontextmanager
@@ -69,6 +72,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(
+        RequestTimeoutMiddleware,
+        timeout_seconds=API_REQUEST_TIMEOUT_SECONDS,
+    )
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(PrometheusMiddleware)
     app.add_middleware(

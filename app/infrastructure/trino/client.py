@@ -9,7 +9,14 @@ from sqlalchemy.engine import URL
 from sqlalchemy.sql import Executable
 
 from app.core.config import Settings
+from app.core.exceptions import ExternalServiceTimeoutError
 from app.utils.sql import quote_identifier_path
+
+TRINO_MAX_ATTEMPTS = 3
+TRINO_POOL_SIZE = 5
+TRINO_MAX_OVERFLOW = 10
+TRINO_POOL_TIMEOUT_SECONDS = 30.0
+TRINO_POOL_RECYCLE_SECONDS = 1800
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +58,14 @@ class TrinoPythonClient:
         self._engine_lock = Lock()
 
     async def execute(self, statement: str | Executable) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._execute_sync, statement)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._execute_sync, statement),
+                timeout=self.settings.trino_query_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            self._dispose_current_engine()
+            raise ExternalServiceTimeoutError("Trino query") from exc
 
     async def get_catalogs(self) -> list[str]:
         rows = await self.execute("SHOW CATALOGS")
@@ -114,8 +128,15 @@ class TrinoPythonClient:
             factory = create_engine
         return factory(
             self._trino_url(),
+            pool_size=TRINO_POOL_SIZE,
+            max_overflow=TRINO_MAX_OVERFLOW,
+            pool_timeout=TRINO_POOL_TIMEOUT_SECONDS,
+            pool_recycle=TRINO_POOL_RECYCLE_SECONDS,
+            pool_use_lifo=True,
             connect_args={
                 "http_scheme": self.settings.trino_http_scheme,
+                "request_timeout": self.settings.trino_request_timeout_seconds,
+                "max_attempts": TRINO_MAX_ATTEMPTS,
             },
         )
 
@@ -138,6 +159,13 @@ class TrinoPythonClient:
             if self._engine is engine:
                 self._engine = None
         engine.dispose()
+
+    def _dispose_current_engine(self) -> None:
+        with self._engine_lock:
+            engine = self._engine
+            self._engine = None
+        if engine is not None:
+            engine.dispose()
 
     def _close_sync(self) -> None:
         with self._engine_lock:

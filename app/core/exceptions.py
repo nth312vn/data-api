@@ -66,6 +66,15 @@ class NotFoundError(AppError):
         )
 
 
+class ExternalServiceTimeoutError(AppError):
+    def __init__(self, service_name: str) -> None:
+        super().__init__(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            code="external_service_timeout",
+            message=f"{service_name} timed out",
+        )
+
+
 def error_response(
     *,
     request: Request,

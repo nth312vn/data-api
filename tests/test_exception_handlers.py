@@ -19,7 +19,7 @@ def test_validation_error_response_serializes_bytes_input() -> None:
 
     response = TestClient(app).post(
         "/payload",
-        data=b"username=admin&password=secret",
+        content=b"username=admin&password=secret",
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
 

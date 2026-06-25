@@ -1,8 +1,10 @@
+import time
 from typing import Any
 
 import pytest
 
 from app.core.config import Settings
+from app.core.exceptions import ExternalServiceTimeoutError
 from app.infrastructure.trino.client import TrinoColumn, TrinoPythonClient
 
 
@@ -102,7 +104,18 @@ async def test_trino_client_uses_sqlalchemy_url_and_password() -> None:
     assert url.password == "secret-password"
     assert url.host == "localhost"
     assert url.port == 8080
-    assert captured["kwargs"] == {"connect_args": {"http_scheme": "http"}}
+    assert captured["kwargs"] == {
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30.0,
+        "pool_recycle": 1800,
+        "pool_use_lifo": True,
+        "connect_args": {
+            "http_scheme": "http",
+            "request_timeout": 30.0,
+            "max_attempts": 3,
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -181,6 +194,41 @@ async def test_trino_client_recreates_engine_after_query_failure() -> None:
 
     assert result == [{"value": 1}]
     assert len(engines) == 2
+
+
+@pytest.mark.asyncio
+async def test_trino_client_disposes_engine_after_query_timeout() -> None:
+    class SlowConnection(FakeConnection):
+        def execute(self, statement: Any) -> FakeResult:
+            time.sleep(0.05)
+            return super().execute(statement)
+
+    class SlowEngine(FakeEngine):
+        def connect(self) -> FakeConnection:
+            connection = SlowConnection(
+                responses=self.responses,
+                executed_sql=self.executed_sql,
+            )
+            self.connections.append(connection)
+            return connection
+
+    engine = SlowEngine({"SELECT slow": (["value"], [(1,)])})
+
+    def engine_factory(*_args: Any, **_kwargs: Any) -> FakeEngine:
+        return engine
+
+    client = TrinoPythonClient(
+        settings=Settings(
+            jwt_secret_key="test-secret-key-with-at-least-32-chars",
+            trino_query_timeout_seconds=0.01,
+        ),
+        engine_factory=engine_factory,
+    )
+
+    with pytest.raises(ExternalServiceTimeoutError):
+        await client.execute("SELECT slow")
+
+    assert engine.disposed is True
 
 
 @pytest.mark.asyncio

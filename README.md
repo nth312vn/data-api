@@ -174,10 +174,19 @@ Important variables:
 - `LOG_FILE_MAX_MB`, `LOG_FILE_BACKUP_COUNT`: rotating file log size in MB and backup count.
 - `METRICS_ENABLED`, `METRICS_HOST`, `METRICS_PORT`: Prometheus metrics server settings.
 - `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_PASSWORD`, `TRINO_HTTP_SCHEME`: Trino connection settings.
+- `TRINO_REQUEST_TIMEOUT_SECONDS`: timeout for each Trino HTTP request made by the driver.
+- `TRINO_QUERY_TIMEOUT_SECONDS`: maximum app-side runtime for one Trino query.
 - `PII_MAPPING_MISSING_TTL_SECONDS`: TTL for keys confirmed absent from the PII database.
 - `PII_MAPPING_SNAPSHOT_BATCH_SIZE`: maximum row/key count per PII database query.
 
-Trino queries run through the SQLAlchemy dialect provided by `trino[sqlalchemy]`.
+The API request timeout, database pool settings, database statement timeouts,
+and Trino retry/pool settings are configured directly in the application modules.
+Database pools use `pool_pre_ping`, LIFO checkout, bounded pool waits, and
+connection recycling to avoid stale long-lived connections. PostgreSQL
+connections also set asyncpg connect/command timeouts and server-side
+`statement_timeout` directly in the database session modules. Trino queries run
+through the SQLAlchemy dialect provided by `trino[sqlalchemy]` with configurable
+driver request timeout and app-side query timeout.
 
 ## API Examples
 
