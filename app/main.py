@@ -23,23 +23,15 @@ from app.middlewares.timeout import RequestTimeoutMiddleware
 
 API_REQUEST_TIMEOUT_SECONDS = 120.0
 
+# Module-level reference so the main process can manage it.
+_metrics_server: MetricsServer | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger = get_logger(__name__)
     logger.info("application_starting")
     settings = get_settings()
-    metrics_server: MetricsServer | None = None
-    if settings.metrics_enabled:
-        metrics_server = start_metrics_server(
-            host=settings.metrics_host,
-            port=settings.metrics_port,
-        )
-        logger.info(
-            "prometheus_metrics_server_started host=%s port=%d",
-            settings.metrics_host,
-            settings.metrics_port,
-        )
     loaded, cached = await initialize_pii_mapping_cache(settings)
     logger.info(
         "pii_mapping_cache_initialized loaded=%d cached=%d batch_size=%d",
@@ -50,7 +42,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        stop_metrics_server(metrics_server)
         await close_trino_client()
         logger.info("application_stopping")
 
@@ -93,3 +84,35 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    settings = get_settings()
+    logger = get_logger(__name__)
+
+    # Start the Prometheus metrics server once in the main process,
+    # before uvicorn forks workers. This guarantees a single metrics
+    # HTTP server regardless of how many workers are spawned.
+    if settings.metrics_enabled:
+        _metrics_server = start_metrics_server(
+            host=settings.metrics_host,
+            port=settings.metrics_port,
+        )
+        logger.info(
+            "prometheus_metrics_server_started host=%s port=%d",
+            settings.metrics_host,
+            settings.metrics_port,
+        )
+
+    try:
+        uvicorn.run(
+            "app.main:app",
+            host=settings.uvicorn_host,
+            port=settings.uvicorn_port,
+            workers=settings.uvicorn_workers,
+            log_level=settings.log_level.lower(),
+        )
+    finally:
+        stop_metrics_server(_metrics_server)
