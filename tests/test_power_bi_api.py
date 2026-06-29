@@ -9,17 +9,17 @@ from fastapi.testclient import TestClient
 from app.api.v1.endpoints.power_bi import get_deeplink_1, router
 from app.core.exceptions import register_exception_handlers
 from app.dependencies.auth import get_current_user
-from app.dependencies.services import get_data_query_service
+from app.dependencies.services import get_power_bi_service
 from app.models.user import User, UserRole
-from app.schemas.data_query import DataRowsResponse
-from app.services.data_query import DataQueryService
+from app.schemas.common import DataRowsResponse
+from app.services.data_query import PowerBiDataService
 
 
 class RecordingDataQueryService:
     def __init__(self) -> None:
         self.arguments: dict[str, Any] = {}
 
-    async def power_bi_deeplink_1(self, **arguments: Any) -> DataRowsResponse:
+    async def deeplink_1(self, **arguments: Any) -> DataRowsResponse:
         self.arguments = arguments
         return DataRowsResponse(rows=[], missing_mappings=[])
 
@@ -36,7 +36,7 @@ def test_deeplink_query_defaults_to_yesterday_through_today() -> None:
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_data_query_service] = lambda: service
+    app.dependency_overrides[get_power_bi_service] = lambda: service
 
     today_before_request = date.today()
     with TestClient(app) as client:
@@ -66,7 +66,7 @@ def test_deeplink_pydantic_validation_error_uses_request_error_format() -> None:
     register_exception_handlers(app)
     app.include_router(router)
     app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_data_query_service] = lambda: service
+    app.dependency_overrides[get_power_bi_service] = lambda: service
 
     response = TestClient(app).get(
         "/deeplink_1",
@@ -107,7 +107,10 @@ async def test_deeplink_api_defaults_date_range_and_forwards_normalized_filters(
         role=UserRole.user,
     )
 
+    from fastapi import BackgroundTasks
+    from tests.test_data_query_service import FakeAuditLogRepository, FakeUnitOfWork
     await get_deeplink_1(
+        background_tasks=BackgroundTasks(),
         start_date=None,
         end_date=None,
         limit=None,
@@ -115,11 +118,12 @@ async def test_deeplink_api_defaults_date_range_and_forwards_normalized_filters(
         user_agent=["Android,Dalvik"],
         customer_id=["uuid-1,uuid-2"],
         current_user=user,
-        service=cast(DataQueryService, service),
+        service=cast(PowerBiDataService, service),
+        audit_logs=FakeAuditLogRepository(),
+        uow=FakeUnitOfWork(),
     )
 
     assert service.arguments == {
-        "actor": user,
         "start_date": date.today() - timedelta(days=1),
         "end_date": date.today(),
         "limit": None,

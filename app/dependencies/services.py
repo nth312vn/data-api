@@ -15,7 +15,7 @@ from app.repositories.interfaces.pii_mapping import PiiMappingRepository
 from app.repositories.interfaces.user import UserRepository
 from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
 from app.services.auth import AuthService
-from app.services.data_query import DataQueryService
+from app.services.data_query import PowerBiDataService, UsersDataService, PiiMapper
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 from app.services.pii_mapping_snapshot import load_pii_mapping_snapshot
 from app.services.user import UserService
@@ -91,19 +91,39 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
     return loaded, cache.size
 
 
-def get_data_query_service(
+def get_pii_mapper(
+    pii_mappings: PiiMappingRepository = Depends(get_pii_mapping_repository),
+    mapping_cache: InMemoryPiiMappingCache = Depends(get_pii_mapping_cache),
+) -> PiiMapper:
+    return PiiMapper(
+        pii_mappings=pii_mappings,
+        mapping_cache=mapping_cache,
+    )
+
+
+def get_power_bi_service(
     settings: Settings = Depends(get_settings),
     trino: TrinoClient = Depends(get_trino_client),
-    pii_mappings: PiiMappingRepository = Depends(get_pii_mapping_repository),
-    audit_logs: AuditLogRepository = Depends(get_audit_log_repository),
-    mapping_cache: InMemoryPiiMappingCache = Depends(get_pii_mapping_cache),
+    pii_mapper: PiiMapper = Depends(get_pii_mapper),
     uow: UnitOfWork = Depends(get_unit_of_work),
-) -> DataQueryService:
-    return DataQueryService(
+) -> PowerBiDataService:
+    return PowerBiDataService(
         settings=settings,
         trino=trino,
-        pii_mappings=pii_mappings,
-        audit_logs=audit_logs,
-        mapping_cache=mapping_cache,
+        pii_mapper=pii_mapper,
+        uow=uow,
+    )
+
+
+def get_users_data_service(
+    settings: Settings = Depends(get_settings),
+    trino: TrinoClient = Depends(get_trino_client),
+    pii_mapper: PiiMapper = Depends(get_pii_mapper),
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> UsersDataService:
+    return UsersDataService(
+        settings=settings,
+        trino=trino,
+        pii_mapper=pii_mapper,
         uow=uow,
     )

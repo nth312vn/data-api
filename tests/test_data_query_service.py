@@ -3,6 +3,10 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from typing import Any
+from uuid import uuid4
+
+import pytest
 
 from app.core.config import Settings
 from app.infrastructure.trino import TrinoColumn
@@ -10,7 +14,7 @@ from app.models.audit_log import AuditLog
 from app.models.user import User, UserRole
 from app.repositories.interfaces.pii_mapping import PiiMappingKey, PiiMappingRecord
 from app.schemas.power_bi import PowerBiDeeplinkRequest
-from app.services.data_query import DataQueryService
+from app.services.data_query import UsersDataService, PowerBiDataService, PiiMapper
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 
 
@@ -121,8 +125,8 @@ def test_power_bi_request_defaults_to_yesterday_through_today_without_limit() ->
 
 @pytest.mark.asyncio
 async def test_query_maps_pii_from_cache_and_database() -> None:
-    cached_customer_key = PiiMappingKey("customer_id", "customer-1")
-    db_customer_key = PiiMappingKey("customer_id", "customer-2")
+    cached_customer_key = PiiMappingKey("customer_id", "c" * 31 + "1")
+    db_customer_key = PiiMappingKey("customer_id", "c" * 31 + "2")
     cache = InMemoryPiiMappingCache()
     cache.set_many(
         {
@@ -134,25 +138,22 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
             db_customer_key: "adf349fb-bbfc-4102-96a1-65af0b063389",
         },
     )
-    audit_repo = FakeAuditLogRepository()
     uow = FakeUnitOfWork()
     trino = FakeTrinoClient(
         [
-            {"customer_id": "customer-1", "amount": 100},
-            {"customer_id": "customer-2", "amount": 200},
+            {"customer_id": "c" * 31 + "1", "amount": 100},
+            {"customer_id": "c" * 31 + "2", "amount": 200},
         ],
     )
-    service = DataQueryService(
+    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=cache)
+    service = UsersDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
-        pii_mappings=mapping_repo,
-        audit_logs=audit_repo,
-        mapping_cache=cache,
+        pii_mapper=pii_mapper,
         uow=uow,
     )
 
     response = await service.list_users(
-        actor=make_user(),
         limit=50,
         offset=10,
     )
@@ -169,7 +170,6 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
     ]
     assert response.missing_mappings == []
     assert mapping_repo.requested_keys == {db_customer_key}
-    assert audit_repo.audit_logs == []
     assert uow.commits == 0
     assert trino.sql is not None
     assert 'FROM "hive"."default"."users"' in trino.sql
@@ -178,64 +178,48 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_audits_missing_pii_mappings() -> None:
-    missing_key = PiiMappingKey("customer_id", "missing-customer")
-    audit_repo = FakeAuditLogRepository()
+async def test_query_returns_missing_pii_mappings() -> None:
+    missing_key = PiiMappingKey("customer_id", "m" * 32)
     uow = FakeUnitOfWork()
-    service = DataQueryService(
+    mapping_cache = InMemoryPiiMappingCache()
+    pii_mapper = PiiMapper(pii_mappings=FakePiiMappingRepository({}), mapping_cache=mapping_cache)
+    service = UsersDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
-        trino=FakeTrinoClient([{"customer_id": "missing-customer"}]),
-        pii_mappings=FakePiiMappingRepository({}),
-        audit_logs=audit_repo,
-        mapping_cache=InMemoryPiiMappingCache(),
+        trino=FakeTrinoClient([{"customer_id": "m" * 32}]),
+        pii_mapper=pii_mapper,
         uow=uow,
     )
 
     response = await service.list_users(
-        actor=make_user(),
         limit=100,
         offset=0,
     )
 
-    assert response.rows == [{"customer_id": "missing-customer"}]
+    assert response.rows == [{"customer_id": "m" * 32}]
     assert [mapping.model_dump() for mapping in response.missing_mappings] == [
         {
             "pii_type": missing_key.pii_type,
             "token": missing_key.token,
         },
     ]
-    assert len(audit_repo.audit_logs) == 1
-    assert audit_repo.audit_logs[0].api_route == "data.users"
-    assert audit_repo.audit_logs[0].allowed is False
-    assert audit_repo.audit_logs[0].error_message == "Missing PII mapping"
-    assert audit_repo.audit_logs[0].parameters is not None
-    assert audit_repo.audit_logs[0].parameters["missing_mappings"] == [
-        {
-            "pii_type": missing_key.pii_type,
-            "token": missing_key.token,
-        },
-    ]
-    assert uow.commits == 1
 
 
 @pytest.mark.asyncio
 async def test_query_does_not_reload_keys_in_temporary_missing_cache() -> None:
     mapping_repo = FakePiiMappingRepository({})
-    service = DataQueryService(
+    mapping_cache = InMemoryPiiMappingCache(missing_ttl_seconds=60)
+    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=mapping_cache)
+    service = UsersDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
-        trino=FakeTrinoClient([{"customer_id": "missing-customer"}]),
-        pii_mappings=mapping_repo,
-        audit_logs=FakeAuditLogRepository(),
-        mapping_cache=InMemoryPiiMappingCache(
-            missing_ttl_seconds=60,
-        ),
+        trino=FakeTrinoClient([{"customer_id": "m" * 32}]),
+        pii_mapper=pii_mapper,
         uow=FakeUnitOfWork(),
     )
 
-    await service.list_users(actor=make_user(), limit=100, offset=0)
-    await service.list_users(actor=make_user(), limit=100, offset=0)
+    await service.list_users(limit=100, offset=0)
+    await service.list_users(limit=100, offset=0)
 
-    assert mapping_repo.requests == [{PiiMappingKey("customer_id", "missing-customer")}]
+    assert mapping_repo.requests == [{PiiMappingKey("customer_id", "m" * 32)}]
 
 
 @pytest.mark.asyncio
@@ -244,35 +228,33 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
         [
             {
                 "stt": 1,
-                "accountid": "VNH001234567890X",
+                "accountid": "v" * 32 + "X",
             }
         ],
     )
-    account_key = PiiMappingKey("customer_id", "VNH001234567890")
+    account_key = PiiMappingKey("accountid", "v" * 32)
     mapping_repo = FakePiiMappingRepository(
         {
             account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
         },
     )
-    service = DataQueryService(
+    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=InMemoryPiiMappingCache())
+    service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
-        pii_mappings=mapping_repo,
-        audit_logs=FakeAuditLogRepository(),
-        mapping_cache=InMemoryPiiMappingCache(),
+        pii_mapper=pii_mapper,
         uow=FakeUnitOfWork(),
     )
 
-    response = await service.power_bi_deeplink_1(
-        actor=make_user(),
+    response = await service.deeplink_1(
         start_date=date(2026, 6, 1),
         end_date=date(2026, 6, 2),
         limit=1000,
-        customer_ids=("7c37bb4b-0e15-4fb9-b589-f57211ac1679",),
+        customer_ids=("7c37bb4b-0e15-4fb9-b589-f57211ac1679X",),
     )
 
     assert response.rows == [
-        {"stt": 1, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679"}
+        {"stt": 1, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679X"}
     ]
     assert response.missing_mappings == []
     assert mapping_repo.requested_keys == {account_key}
@@ -296,35 +278,33 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
 async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
     trino = FakeTrinoClient(
         [
-            {"stt": 1, "accountid": "VNH001234567890X"},
-            {"stt": 2, "accountid": "VNH001"},
+            {"stt": 1, "accountid": "v" * 32 + "X"},
+            {"stt": 2, "accountid": "v" * 32},
         ],
     )
-    account_key = PiiMappingKey("customer_id", "VNH001234567890")
+    account_key = PiiMappingKey("accountid", "v" * 32)
     mapping_repo = FakePiiMappingRepository(
         {
             account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
         },
     )
-    service = DataQueryService(
+    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=InMemoryPiiMappingCache())
+    service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
-        pii_mappings=mapping_repo,
-        audit_logs=FakeAuditLogRepository(),
-        mapping_cache=InMemoryPiiMappingCache(),
+        pii_mapper=pii_mapper,
         uow=FakeUnitOfWork(),
     )
 
-    response = await service.power_bi_deeplink_2(
-        actor=make_user(),
+    response = await service.deeplink_2(
         start_date=date(2026, 6, 1),
         end_date=date(2026, 6, 2),
         limit=None,
     )
 
     assert response.rows == [
-        {"stt": 1, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679"},
-        {"stt": 2, "accountid": "VNH001"},
+        {"stt": 1, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679X"},
+        {"stt": 2, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679"},
     ]
     assert response.missing_mappings == []
     assert mapping_repo.requested_keys == {account_key}
@@ -339,44 +319,39 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
 
 @pytest.mark.asyncio
 async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
-    first_key = PiiMappingKey("customer_id", "VNH001234567890")
+    first_key = PiiMappingKey("accountid", "v" * 32)
     first_uuid = "7c37bb4b-0e15-4fb9-b589-f57211ac1679"
     trino = FakeTrinoClient(
         [
             {
                 "stt": 1,
-                "accountid": "VNH001234567890X",
+                "accountid": "v" * 32 + "X",
                 "bank_name": "VCB",
             },
         ],
     )
-    service = DataQueryService(
+    mapping_repo = FakePiiMappingRepository({first_key: first_uuid})
+    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=InMemoryPiiMappingCache())
+    service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
-        pii_mappings=FakePiiMappingRepository(
-            {
-                first_key: first_uuid,
-            },
-        ),
-        audit_logs=FakeAuditLogRepository(),
-        mapping_cache=InMemoryPiiMappingCache(),
+        pii_mapper=pii_mapper,
         uow=FakeUnitOfWork(),
     )
 
-    response = await service.power_bi_deeplink_2(
-        actor=make_user(),
+    response = await service.deeplink_2(
         start_date=date(2026, 6, 1),
         end_date=date(2026, 6, 2),
         limit=1,
         segmentation_filters=("VCB",),
         user_agent_filters=("IOS", "android"),
-        customer_ids=(first_uuid,),
+        customer_ids=(first_uuid + "X",),
     )
 
     assert response.rows == [
         {
             "stt": 1,
-            "accountid": first_uuid,
+            "accountid": first_uuid + "X",
             "bank_name": "VCB",
         }
     ]
