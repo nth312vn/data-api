@@ -15,6 +15,7 @@ from app.repositories.interfaces.pii_mapping import PiiMappingRepository
 from app.repositories.interfaces.user import UserRepository
 from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
 from app.services.auth import AuthService
+from app.services.audit_log import AuditLogService
 from app.services.data_query import PowerBiDataService, UsersDataService, PiiMapper
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 from app.services.pii_mapping_snapshot import load_pii_mapping_snapshot
@@ -125,5 +126,15 @@ def get_users_data_service(
         settings=settings,
         trino=trino,
         pii_mapper=pii_mapper,
+        uow=uow,
+    )
+
+
+def get_audit_log_service(
+    audit_logs: AuditLogRepository = Depends(get_audit_log_repository),
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> AuditLogService:
+    return AuditLogService(
+        audit_logs=audit_logs,
         uow=uow,
     )

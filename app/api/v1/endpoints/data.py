@@ -1,42 +1,13 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.dependencies.auth import get_current_user
-from app.dependencies.repositories import get_audit_log_repository
-from app.dependencies.database import get_unit_of_work
-from app.dependencies.services import get_users_data_service
-from app.models.audit_log import AuditLog
+from app.dependencies.services import get_users_data_service, get_audit_log_service
 from app.models.user import User
-from app.repositories.interfaces.audit_log import AuditLogRepository
-from app.infrastructure.database.unit_of_work import UnitOfWork
-from app.schemas.common import DataRowsResponse, MissingPiiMapping
+from app.schemas.common import DataRowsResponse
 from app.services.data_query import UsersDataService
+from app.services.audit_log import AuditLogService
 
 router = APIRouter()
-
-
-async def _audit_missing_mappings(
-    *,
-    audit_logs: AuditLogRepository,
-    uow: UnitOfWork,
-    actor: User,
-    route_name: str,
-    missing_mappings: list[MissingPiiMapping],
-) -> None:
-    await audit_logs.create(
-        AuditLog(
-            user_id=actor.id,
-            username=actor.username,
-            api_route=route_name,
-            parameters={
-                "missing_mappings": [
-                    mapping.model_dump() for mapping in missing_mappings
-                ],
-            },
-            allowed=False,
-            error_message="Missing PII mapping",
-        ),
-    )
-    await uow.commit()
 
 
 @router.get("/users", response_model=DataRowsResponse)
@@ -46,8 +17,7 @@ async def list_users_data(
     offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
     service: UsersDataService = Depends(get_users_data_service),
-    audit_logs: AuditLogRepository = Depends(get_audit_log_repository),
-    uow: UnitOfWork = Depends(get_unit_of_work),
+    audit_logs_service: AuditLogService = Depends(get_audit_log_service),
 ) -> DataRowsResponse:
     response = await service.list_users(
         limit=limit,
@@ -55,9 +25,7 @@ async def list_users_data(
     )
     if response.missing_mappings:
         background_tasks.add_task(
-            _audit_missing_mappings,
-            audit_logs=audit_logs,
-            uow=uow,
+            audit_logs_service.audit_missing_mappings,
             actor=current_user,
             route_name="data.users",
             missing_mappings=response.missing_mappings,
