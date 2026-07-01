@@ -27,6 +27,26 @@ class BaseDataQueryService:
         *,
         spec: DataRouteSpec,
     ) -> DataRowsResponse:
+        if not spec.effective_pii_fields:
+            return await self._execute_route_without_pii(spec=spec)
+        return await self._execute_route_with_pii(spec=spec)
+
+    async def _execute_route_without_pii(
+        self,
+        *,
+        spec: DataRouteSpec,
+    ) -> DataRowsResponse:
+        rows = await self.trino.execute(spec.statement)
+        return DataRowsResponse(
+            rows=rows,
+            missing_mappings=[],
+        )
+
+    async def _execute_route_with_pii(
+        self,
+        *,
+        spec: DataRouteSpec,
+    ) -> DataRowsResponse:
         rows = await self.trino.execute(spec.statement)
         mapped_rows, missing_keys = await self.pii_mapper.map_pii_fields(
             rows=rows,
