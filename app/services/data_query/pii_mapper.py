@@ -85,14 +85,14 @@ class PiiMapper:
         if value is None:
             return None
 
-        rule = spec.pii_field_rules.get(field)
+        rule = spec.get_pii_rule(field)
         if rule is not None:
             result = rule.token_mapper(value)
             if result is None:
                 return None
             token, suffix = result
             return PiiMappingKey(pii_type=rule.pii_type, token=token), suffix
-        
+
         from app.services.data_query.routes import default_pii_token_mapper
         result = default_pii_token_mapper(value)
         if result is None:

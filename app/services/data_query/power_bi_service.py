@@ -4,7 +4,11 @@ from typing import Any
 from app.models.user import User
 from app.schemas.common import DataRowsResponse
 from app.services.data_query.power_bi import build_power_bi_deeplink_query
-from app.services.data_query.routes import DataRouteSpec
+from app.services.data_query.routes import (
+    DataRouteSpec,
+    PiiFieldMappingRule,
+    default_pii_token_mapper,
+)
 from app.services.data_query.service import BaseDataQueryService
 
 
@@ -30,7 +34,12 @@ class PowerBiDataService(BaseDataQueryService):
                 limit=limit,
                 status="processing",
             ),
-            pii_fields=("accountid",),
+            pii_field_rules={
+                "accountid": PiiFieldMappingRule(
+                    pii_type="accountid",
+                    token_mapper=default_pii_token_mapper,
+                )
+            },
         )
         response = await self._execute_route(spec=spec)
         response.rows = self._filter_mapped_customer_ids(
@@ -59,7 +68,12 @@ class PowerBiDataService(BaseDataQueryService):
                 user_agent_filters=user_agent_filters,
                 limit=limit,
             ),
-            pii_fields=("accountid",),
+            pii_field_rules={
+                "accountid": PiiFieldMappingRule(
+                    pii_type="accountid",
+                    token_mapper=default_pii_token_mapper,
+                )
+            },
         )
         response = await self._execute_route(spec=spec)
         response.rows = self._filter_mapped_customer_ids(

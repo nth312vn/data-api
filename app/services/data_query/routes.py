@@ -42,11 +42,21 @@ class PiiFieldMappingRule:
 class DataRouteSpec:
     route_name: str
     statement: str | Executable
-    pii_fields: tuple[str, ...] = ()
-    pii_field_rules: Mapping[str, PiiFieldMappingRule] = field(default_factory=dict)
+    pii_field_rules: Mapping[str, str | PiiFieldMappingRule] = field(default_factory=dict)
 
     @property
     def effective_pii_fields(self) -> tuple[str, ...]:
-        if self.pii_field_rules:
-            return tuple(self.pii_field_rules.keys())
-        return self.pii_fields
+        return tuple(self.pii_field_rules.keys())
+
+    def get_pii_rule(self, field_name: str) -> PiiFieldMappingRule | None:
+        """Return the resolved PiiFieldMappingRule for a field.
+
+        Accepts shorthand string values (treated as pii_type) or full
+        PiiFieldMappingRule instances.
+        """
+        rule = self.pii_field_rules.get(field_name)
+        if rule is None:
+            return None
+        if isinstance(rule, str):
+            return PiiFieldMappingRule(pii_type=rule)
+        return rule

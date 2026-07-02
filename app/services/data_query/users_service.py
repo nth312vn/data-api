@@ -14,6 +14,6 @@ class UsersDataService(BaseDataQueryService):
         spec = DataRouteSpec(
             route_name="data.users",
             statement=build_users_query(limit=limit, offset=offset),
-            pii_fields=("customer_id",),
+            pii_field_rules={"customer_id": "customer_id"},
         )
         return await self._execute_route(spec=spec)
