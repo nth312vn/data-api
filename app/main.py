@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,10 +17,12 @@ from app.core.metrics import (
 )
 from app.dependencies.services import (
     close_trino_client,
+    get_pii_mapping_cache,
     initialize_pii_mapping_cache,
 )
 from app.middlewares.request_id import RequestIDMiddleware
 from app.middlewares.timeout import RequestTimeoutMiddleware
+from app.services.pii_cache_sync import run_pii_cache_sync_loop
 
 API_REQUEST_TIMEOUT_SECONDS = 120.0
 
@@ -42,9 +45,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cached,
         settings.pii_mapping_snapshot_batch_size,
     )
+
+    # Start the background incremental sync loop.
+    # If init failed (loaded=0), the loop will detect last_synced_at=None
+    # and run a full recovery snapshot on its first iteration.
+    cache = get_pii_mapping_cache(settings)
+    stop_event = asyncio.Event()
+    sync_task = asyncio.create_task(
+        run_pii_cache_sync_loop(
+            cache=cache,
+            settings=settings,
+            stop_event=stop_event,
+        ),
+        name="pii_cache_sync",
+    )
+
     try:
         yield
     finally:
+        stop_event.set()
+        await sync_task
         await close_trino_client()
         logger.info("application_stopping")
 

@@ -1,18 +1,14 @@
 from datetime import date
 from typing import Any
 
-from app.models.user import User
 from app.schemas.common import DataRowsResponse
-from app.services.data_query.power_bi import build_power_bi_deeplink_query
-from app.services.data_query.routes import (
-    DataRouteSpec,
-    PiiFieldMappingRule,
-    default_pii_token_mapper,
-)
-from app.services.data_query.service import BaseDataQueryService
+from app.services.query_engine.pii_rules import QuerySpec
+from app.services.query_engine.power_bi_query import build_power_bi_deeplink_query
+from app.services.query_engine.power_bi_rules import POWER_BI_ACCOUNT_PII_RULES
+from app.services.query_engine.base_service import BaseQueryService
 
 
-class PowerBiDataService(BaseDataQueryService):
+class PowerBiDataService(BaseQueryService):
     async def deeplink_1(
         self,
         *,
@@ -23,7 +19,7 @@ class PowerBiDataService(BaseDataQueryService):
         user_agent_filters: tuple[str, ...] = (),
         customer_ids: tuple[str, ...] = (),
     ) -> DataRowsResponse:
-        spec = DataRouteSpec(
+        spec = QuerySpec(
             route_name="power_bi.deeplink_1",
             statement=build_power_bi_deeplink_query(
                 event_key="topup_result",
@@ -34,12 +30,7 @@ class PowerBiDataService(BaseDataQueryService):
                 limit=limit,
                 status="processing",
             ),
-            pii_field_rules={
-                "accountid": PiiFieldMappingRule(
-                    pii_type="accountid",
-                    token_mapper=default_pii_token_mapper,
-                )
-            },
+            column_pii_rules=POWER_BI_ACCOUNT_PII_RULES,
         )
         response = await self._execute_route(spec=spec)
         response.rows = self._filter_mapped_customer_ids(
@@ -58,7 +49,7 @@ class PowerBiDataService(BaseDataQueryService):
         user_agent_filters: tuple[str, ...] = (),
         customer_ids: tuple[str, ...] = (),
     ) -> DataRowsResponse:
-        spec = DataRouteSpec(
+        spec = QuerySpec(
             route_name="power_bi.deeplink_2",
             statement=build_power_bi_deeplink_query(
                 event_key="topup_bank_app",
@@ -68,12 +59,7 @@ class PowerBiDataService(BaseDataQueryService):
                 user_agent_filters=user_agent_filters,
                 limit=limit,
             ),
-            pii_field_rules={
-                "accountid": PiiFieldMappingRule(
-                    pii_type="accountid",
-                    token_mapper=default_pii_token_mapper,
-                )
-            },
+            column_pii_rules=POWER_BI_ACCOUNT_PII_RULES,
         )
         response = await self._execute_route(spec=spec)
         response.rows = self._filter_mapped_customer_ids(

@@ -14,7 +14,7 @@ from app.models.audit_log import AuditLog
 from app.models.user import User, UserRole
 from app.repositories.interfaces.pii_mapping import PiiMappingKey, PiiMappingRecord
 from app.schemas.power_bi import PowerBiDeeplinkRequest
-from app.services.data_query import UsersDataService, PowerBiDataService, PiiMapper
+from app.services.query_engine import UsersDataService, PowerBiDataService, PiiMapper
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 
 
@@ -131,10 +131,6 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
     cache.set_many(
         {
             cached_customer_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
-        },
-    )
-    mapping_repo = FakePiiMappingRepository(
-        {
             db_customer_key: "adf349fb-bbfc-4102-96a1-65af0b063389",
         },
     )
@@ -145,7 +141,7 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
             {"customer_id": "c" * 31 + "2", "amount": 200},
         ],
     )
-    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=cache)
+    pii_mapper = PiiMapper(mapping_cache=cache)
     service = UsersDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
@@ -169,7 +165,6 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
         },
     ]
     assert response.missing_mappings == []
-    assert mapping_repo.requested_keys == {db_customer_key}
     assert uow.commits == 0
     assert trino.sql is not None
     assert 'FROM "hive"."default"."users"' in trino.sql
@@ -178,11 +173,10 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_returns_missing_pii_mappings() -> None:
-    missing_key = PiiMappingKey("customer_id", "m" * 32)
+async def test_query_keeps_unmapped_pii_values_when_not_in_cache() -> None:
     uow = FakeUnitOfWork()
     mapping_cache = InMemoryPiiMappingCache()
-    pii_mapper = PiiMapper(pii_mappings=FakePiiMappingRepository({}), mapping_cache=mapping_cache)
+    pii_mapper = PiiMapper(mapping_cache=mapping_cache)
     service = UsersDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=FakeTrinoClient([{"customer_id": "m" * 32}]),
@@ -195,20 +189,18 @@ async def test_query_returns_missing_pii_mappings() -> None:
         offset=0,
     )
 
+    # Cache-only mapper: unmapped values stay as-is
     assert response.rows == [{"customer_id": "m" * 32}]
-    assert [mapping.model_dump() for mapping in response.missing_mappings] == [
-        {
-            "pii_type": missing_key.pii_type,
-            "token": missing_key.token,
-        },
-    ]
+    assert response.missing_mappings == []
 
 
 @pytest.mark.asyncio
-async def test_query_does_not_reload_keys_in_temporary_missing_cache() -> None:
-    mapping_repo = FakePiiMappingRepository({})
-    mapping_cache = InMemoryPiiMappingCache(missing_ttl_seconds=60)
-    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=mapping_cache)
+async def test_query_maps_value_when_present_in_cache() -> None:
+    mapping_cache = InMemoryPiiMappingCache()
+    mapping_cache.set_many(
+        {PiiMappingKey("customer_id", "m" * 32): "resolved-uuid"},
+    )
+    pii_mapper = PiiMapper(mapping_cache=mapping_cache)
     service = UsersDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=FakeTrinoClient([{"customer_id": "m" * 32}]),
@@ -216,10 +208,10 @@ async def test_query_does_not_reload_keys_in_temporary_missing_cache() -> None:
         uow=FakeUnitOfWork(),
     )
 
-    await service.list_users(limit=100, offset=0)
-    await service.list_users(limit=100, offset=0)
+    response = await service.list_users(limit=100, offset=0)
 
-    assert mapping_repo.requests == [{PiiMappingKey("customer_id", "m" * 32)}]
+    assert response.rows == [{"customer_id": "resolved-uuid"}]
+    assert response.missing_mappings == []
 
 
 @pytest.mark.asyncio
@@ -233,12 +225,9 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
         ],
     )
     account_key = PiiMappingKey("accountid", "v" * 32)
-    mapping_repo = FakePiiMappingRepository(
-        {
-            account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
-        },
-    )
-    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=InMemoryPiiMappingCache())
+    cache = InMemoryPiiMappingCache()
+    cache.set_many({account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679"})
+    pii_mapper = PiiMapper(mapping_cache=cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
@@ -257,7 +246,6 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
         {"stt": 1, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679X"}
     ]
     assert response.missing_mappings == []
-    assert mapping_repo.requested_keys == {account_key}
     assert trino.sql is not None
     assert "FROM hive.wh_cpm.cpm_event_raw" in trino.sql
     assert "LEFT OUTER JOIN hive.wh_bo_hudi.t_cust_customer" in trino.sql
@@ -283,12 +271,9 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
         ],
     )
     account_key = PiiMappingKey("accountid", "v" * 32)
-    mapping_repo = FakePiiMappingRepository(
-        {
-            account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
-        },
-    )
-    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=InMemoryPiiMappingCache())
+    cache = InMemoryPiiMappingCache()
+    cache.set_many({account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679"})
+    pii_mapper = PiiMapper(mapping_cache=cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,
@@ -307,7 +292,6 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
         {"stt": 2, "accountid": "7c37bb4b-0e15-4fb9-b589-f57211ac1679"},
     ]
     assert response.missing_mappings == []
-    assert mapping_repo.requested_keys == {account_key}
     assert trino.sql is not None
     assert "hive.wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
     assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
@@ -330,8 +314,9 @@ async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
             },
         ],
     )
-    mapping_repo = FakePiiMappingRepository({first_key: first_uuid})
-    pii_mapper = PiiMapper(pii_mappings=mapping_repo, mapping_cache=InMemoryPiiMappingCache())
+    mapping_cache = InMemoryPiiMappingCache()
+    mapping_cache.set_many({first_key: first_uuid})
+    pii_mapper = PiiMapper(mapping_cache=mapping_cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
         trino=trino,

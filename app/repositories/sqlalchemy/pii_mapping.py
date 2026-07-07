@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import AsyncIterator, Iterable, Iterator
+from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import select
@@ -43,10 +44,12 @@ class SQLAlchemyPiiMappingRepository:
 
             token_column = self._model_column(model, model.__pii_token_attr__)
             value_column = self._model_column(model, model.__pii_value_attr__)
+            created_at_column = self._model_column(model, model.__pii_created_at_attr__)
             for token_batch in self._batches(sorted(tokens), self.query_batch_size):
                 stmt = select(
                     token_column.label("token"),
                     value_column.label("mapped_value"),
+                    created_at_column.label("created_at"),
                 ).where(token_column.in_(token_batch))
 
                 result = await self.session.execute(stmt)
@@ -58,6 +61,7 @@ class SQLAlchemyPiiMappingRepository:
                     mappings[key] = PiiMappingRecord(
                         key=key,
                         mapped_value=str(row["mapped_value"]),
+                        created_at=row["created_at"],
                     )
 
         return mappings
@@ -73,12 +77,14 @@ class SQLAlchemyPiiMappingRepository:
         for pii_type, model in self.mapping_models.items():
             token_column = self._model_column(model, model.__pii_token_attr__)
             value_column = self._model_column(model, model.__pii_value_attr__)
+            created_at_column = self._model_column(model, model.__pii_created_at_attr__)
             cursor: Any | None = None
 
             while True:
                 stmt = select(
                     token_column.label("token"),
                     value_column.label("mapped_value"),
+                    created_at_column.label("created_at"),
                 )
                 if cursor is not None:
                     stmt = stmt.where(token_column > cursor)
@@ -99,10 +105,74 @@ class SQLAlchemyPiiMappingRepository:
                     batch[key] = PiiMappingRecord(
                         key=key,
                         mapped_value=str(row["mapped_value"]),
+                        created_at=row["created_at"],
                     )
 
                 yield batch
                 cursor = rows[-1]["token"]
+
+                if len(rows) < batch_size:
+                    break
+
+    async def iter_incremental_batches(
+        self,
+        *,
+        since: datetime,
+        batch_size: int,
+    ) -> AsyncIterator[dict[PiiMappingKey, PiiMappingRecord]]:
+        """Yield batches of records created after `since`, ordered by created_at then token."""
+        if batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero")
+
+        for pii_type, model in self.mapping_models.items():
+            token_column = self._model_column(model, model.__pii_token_attr__)
+            value_column = self._model_column(model, model.__pii_value_attr__)
+            created_at_column = self._model_column(model, model.__pii_created_at_attr__)
+            # Cursor tracks (created_at, token) for stable keyset pagination
+            cursor_created_at: datetime = since
+            cursor_token: str | None = None
+
+            while True:
+                stmt = select(
+                    token_column.label("token"),
+                    value_column.label("mapped_value"),
+                    created_at_column.label("created_at"),
+                ).where(created_at_column > cursor_created_at)
+
+                if cursor_token is not None:
+                    # Within the same created_at second, page by token
+                    stmt = stmt.where(
+                        (created_at_column > cursor_created_at)
+                        | (
+                            (created_at_column == cursor_created_at)
+                            & (token_column > cursor_token)
+                        )
+                    )
+
+                stmt = stmt.order_by(created_at_column, token_column)
+                stmt = stmt.limit(batch_size)
+
+                result = await self.session.execute(stmt)
+                rows = list(result.mappings())
+                if not rows:
+                    break
+
+                batch: dict[PiiMappingKey, PiiMappingRecord] = {}
+                for row in rows:
+                    key = PiiMappingKey(
+                        pii_type=pii_type,
+                        token=str(row["token"]),
+                    )
+                    batch[key] = PiiMappingRecord(
+                        key=key,
+                        mapped_value=str(row["mapped_value"]),
+                        created_at=row["created_at"],
+                    )
+
+                yield batch
+                last_row = rows[-1]
+                cursor_created_at = last_row["created_at"]
+                cursor_token = str(last_row["token"])
 
                 if len(rows) < batch_size:
                     break

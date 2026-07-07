@@ -4,7 +4,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_users_data_service, get_audit_log_service
 from app.models.user import User
 from app.schemas.common import DataRowsResponse
-from app.services.data_query import UsersDataService
+from app.services.query_engine import UsersDataService
 from app.services.audit_log import AuditLogService
 
 router = APIRouter()

@@ -12,7 +12,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_power_bi_service
 from app.models.user import User, UserRole
 from app.schemas.common import DataRowsResponse
-from app.services.data_query import PowerBiDataService
+from app.services.query_engine import PowerBiDataService
 
 
 class RecordingDataQueryService:

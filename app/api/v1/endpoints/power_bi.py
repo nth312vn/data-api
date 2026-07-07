@@ -7,7 +7,7 @@ from app.dependencies.services import get_power_bi_service, get_audit_log_servic
 from app.models.user import User
 from app.schemas.common import DataRowsResponse
 from app.schemas.power_bi import PowerBiDeeplinkRequest, default_start_date
-from app.services.data_query import PowerBiDataService
+from app.services.query_engine import PowerBiDataService
 from app.services.audit_log import AuditLogService
 
 router = APIRouter()

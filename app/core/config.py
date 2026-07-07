@@ -58,6 +58,9 @@ class Settings(BaseSettings):
 
     pii_mapping_missing_ttl_seconds: float = Field(default=60.0, gt=0)
     pii_mapping_snapshot_batch_size: int = Field(default=500, gt=0)
+    pii_sync_interval_seconds: float = Field(default=60.0, gt=0)
+    pii_sync_init_max_retries: int = Field(default=3, ge=1)
+    pii_sync_init_retry_delay_seconds: float = Field(default=5.0, gt=0)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

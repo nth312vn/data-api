@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from time import monotonic
 
 from app.repositories.interfaces.pii_mapping import PiiMappingKey
@@ -26,6 +27,17 @@ class InMemoryPiiMappingCache:
         self._items: dict[_PiiCacheKey, str] = {}
         self._missing_until: dict[_PiiCacheKey, float] = {}
         self._next_missing_expiry: float | None = None
+        self._last_synced_at: datetime | None = None
+
+    @property
+    def last_synced_at(self) -> datetime | None:
+        """Max created_at of records loaded into cache. None if cache not yet initialized."""
+        return self._last_synced_at
+
+    def update_last_synced_at(self, value: datetime) -> None:
+        """Advance last_synced_at to value if value is newer."""
+        if self._last_synced_at is None or value > self._last_synced_at:
+            self._last_synced_at = value
 
     def get_many(self, keys: set[PiiMappingKey]) -> dict[PiiMappingKey, str]:
         values: dict[PiiMappingKey, str] = {}
@@ -35,6 +47,16 @@ class InMemoryPiiMappingCache:
                 continue
             values[key] = value
         return values
+
+    def get_all(self) -> dict[PiiMappingKey, str]:
+        """Return a snapshot of all cached PII mappings.
+
+        Used by PiiMapper to pass the full cache to each rule's mapper function.
+        """
+        return {
+            PiiMappingKey(pii_type=k.pii_type, token=k.token): v
+            for k, v in self._items.items()
+        }
 
     def set_many(self, values: dict[PiiMappingKey, str]) -> None:
         for key, value in values.items():
@@ -72,6 +94,7 @@ class InMemoryPiiMappingCache:
         self._items.clear()
         self._missing_until.clear()
         self._next_missing_expiry = None
+        self._last_synced_at = None
 
     @property
     def size(self) -> int:
