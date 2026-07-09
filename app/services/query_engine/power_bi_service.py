@@ -19,6 +19,10 @@ class PowerBiDataService(BaseQueryService):
         user_agent_filters: tuple[str, ...] = (),
         customer_ids: tuple[str, ...] = (),
     ) -> DataRowsResponse:
+        account_tokens = self._get_tokens_by_original_values(
+            original_values=customer_ids,
+            pii_category="accountid",
+        )
         spec = QuerySpec(
             route_name="power_bi.deeplink_1",
             statement=build_power_bi_deeplink_query(
@@ -27,17 +31,13 @@ class PowerBiDataService(BaseQueryService):
                 end_date=end_date,
                 segmentation_filters=segmentation_filters,
                 user_agent_filters=user_agent_filters,
+                account_id_filters=account_tokens,
                 limit=limit,
                 status="processing",
             ),
             column_pii_rules=POWER_BI_ACCOUNT_PII_RULES,
         )
-        response = await self._execute_route(spec=spec)
-        response.rows = self._filter_mapped_customer_ids(
-            rows=response.rows,
-            customer_ids=customer_ids,
-        )
-        return response
+        return await self._execute_route(spec=spec)
 
     async def deeplink_2(
         self,
@@ -49,6 +49,10 @@ class PowerBiDataService(BaseQueryService):
         user_agent_filters: tuple[str, ...] = (),
         customer_ids: tuple[str, ...] = (),
     ) -> DataRowsResponse:
+        account_tokens = self._get_tokens_by_original_values(
+            original_values=customer_ids,
+            pii_category="accountid",
+        )
         spec = QuerySpec(
             route_name="power_bi.deeplink_2",
             statement=build_power_bi_deeplink_query(
@@ -57,35 +61,9 @@ class PowerBiDataService(BaseQueryService):
                 end_date=end_date,
                 segmentation_filters=segmentation_filters,
                 user_agent_filters=user_agent_filters,
+                account_id_filters=account_tokens,
                 limit=limit,
             ),
             column_pii_rules=POWER_BI_ACCOUNT_PII_RULES,
         )
-        response = await self._execute_route(spec=spec)
-        response.rows = self._filter_mapped_customer_ids(
-            rows=response.rows,
-            customer_ids=customer_ids,
-        )
-        return response
-
-    def _filter_mapped_customer_ids(
-        self,
-        *,
-        rows: list[dict[str, Any]],
-        customer_ids: tuple[str, ...],
-    ) -> list[dict[str, Any]]:
-        if not rows or not customer_ids:
-            return rows
-
-        customer_ids_lower = {value.casefold() for value in customer_ids}
-        filtered_rows = []
-        stt = 1
-        for row in rows:
-            accountid = str(row.get("accountid", ""))
-            if accountid.casefold() in customer_ids_lower:
-                if "stt" in row:
-                    row["stt"] = stt
-                    stt += 1
-                filtered_rows.append(row)
-        
-        return filtered_rows
+        return await self._execute_route(spec=spec)

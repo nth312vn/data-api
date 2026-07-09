@@ -42,6 +42,7 @@ def build_power_bi_deeplink_query(
     end_date: date,
     segmentation_filters: tuple[str, ...] = (),
     user_agent_filters: tuple[str, ...] = (),
+    account_id_filters: tuple[str, ...] = (),
     limit: int | None = None,
     status: str | None = None,
 ) -> Executable:
@@ -92,6 +93,8 @@ def build_power_bi_deeplink_query(
                 [filter_value.casefold() for filter_value in user_agent_filters],
             ),
         )
+    if account_id_filters:
+        conditions.append(account_id.in_(account_id_filters))
 
     statement = (
         select(

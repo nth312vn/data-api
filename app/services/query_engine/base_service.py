@@ -42,6 +42,27 @@ class BaseQueryService:
             missing_mappings=[],
         )
 
+    def _get_tokens_by_original_values(
+        self,
+        *,
+        original_values: tuple[str, ...],
+        pii_category: str,
+    ) -> tuple[str, ...]:
+        if not original_values:
+            return ()
+        lower_values = {v.casefold() for v in original_values}
+        cache = self.pii_mapper.mapping_cache.get_all()
+        tokens = [
+            key.token
+            for key, val in cache.items()
+            if key.pii_type == pii_category and val.casefold() in lower_values
+        ]
+        if not tokens:
+            # Return a dummy token so the query will return an empty result
+            # rather than skipping the filter entirely.
+            return ("__NO_MATCH__",)
+        return tuple(tokens)
+
     async def _execute_route_with_pii(
         self,
         *,

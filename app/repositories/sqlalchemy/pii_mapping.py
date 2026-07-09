@@ -78,7 +78,8 @@ class SQLAlchemyPiiMappingRepository:
             token_column = self._model_column(model, model.__pii_token_attr__)
             value_column = self._model_column(model, model.__pii_value_attr__)
             created_at_column = self._model_column(model, model.__pii_created_at_attr__)
-            cursor: Any | None = None
+            cursor_created_at: datetime | None = None
+            cursor_token: str | None = None
 
             while True:
                 stmt = select(
@@ -86,9 +87,15 @@ class SQLAlchemyPiiMappingRepository:
                     value_column.label("mapped_value"),
                     created_at_column.label("created_at"),
                 )
-                if cursor is not None:
-                    stmt = stmt.where(token_column > cursor)
-                stmt = stmt.order_by(token_column)
+                if cursor_created_at is not None and cursor_token is not None:
+                    stmt = stmt.where(
+                        (created_at_column > cursor_created_at)
+                        | (
+                            (created_at_column == cursor_created_at)
+                            & (token_column > cursor_token)
+                        )
+                    )
+                stmt = stmt.order_by(created_at_column, token_column)
                 stmt = stmt.limit(batch_size)
 
                 result = await self.session.execute(stmt)
@@ -109,7 +116,9 @@ class SQLAlchemyPiiMappingRepository:
                     )
 
                 yield batch
-                cursor = rows[-1]["token"]
+                last_row = rows[-1]
+                cursor_created_at = last_row["created_at"]
+                cursor_token = str(last_row["token"])
 
                 if len(rows) < batch_size:
                     break

@@ -10,15 +10,15 @@ if TYPE_CHECKING:
     from app.repositories.interfaces.pii_mapping import PiiMappingKey
 
 # Transformer nhận column value, toàn bộ PII cache, và pii_category từ rule.
-# min_length / strip_last_character là options của từng hàm — bind qua partial khi define.
-PiiValueTransformer = Callable[[Any, "dict[PiiMappingKey, str]", str], Any]
+# Trả về tuple: (giá trị đã transform, PiiMappingKey nếu bị thiếu trong cache)
+PiiValueTransformer = Callable[[Any, "dict[PiiMappingKey, str]", str], tuple[Any, "PiiMappingKey | None"]]
 
 
 def transform_by_token_length(
     value: Any,
     pii_cache: dict[PiiMappingKey, str],
     pii_category: str,
-) -> Any:
+) -> tuple[Any, "PiiMappingKey | None"]:
     """Transform value dùng quy tắc 32/33 ký tự và lookup pii_cache theo pii_category.
 
     - Độ dài 32: token = value, không có suffix.
@@ -28,15 +28,21 @@ def transform_by_token_length(
     from app.repositories.interfaces.pii_mapping import PiiMappingKey
 
     if value is None:
-        return value
+        return value, None
     token = str(value)
     if len(token) == 32:
-        mapped = pii_cache.get(PiiMappingKey(pii_type=pii_category, token=token))
-        return mapped if mapped is not None else value
+        key = PiiMappingKey(pii_type=pii_category, token=token)
+        mapped = pii_cache.get(key)
+        if mapped is not None:
+            return mapped, None
+        return value, key
     if len(token) == 33:
-        mapped = pii_cache.get(PiiMappingKey(pii_type=pii_category, token=token[:32]))
-        return (mapped + token[32]) if mapped is not None else value
-    return value
+        key = PiiMappingKey(pii_type=pii_category, token=token[:32])
+        mapped = pii_cache.get(key)
+        if mapped is not None:
+            return (mapped + token[32]), None
+        return value, key
+    return value, None
 
 
 def transform_when_exceeds_length(
@@ -46,7 +52,7 @@ def transform_when_exceeds_length(
     *,
     min_length: int,
     strip_last_character: bool = False,
-) -> Any:
+) -> tuple[Any, "PiiMappingKey | None"]:
     """Transform value khi độ dài > min_length, bỏ qua các giá trị ngắn hơn.
 
     min_length và strip_last_character là options của hàm này — bind qua partial:
@@ -58,16 +64,20 @@ def transform_when_exceeds_length(
     from app.repositories.interfaces.pii_mapping import PiiMappingKey
 
     if value is None:
-        return value
+        return value, None
     token = str(value)
     if len(token) <= min_length:
-        return value
+        return value, None
     if strip_last_character:
         actual_token, suffix = token[:-1], token[-1]
     else:
         actual_token, suffix = token, ""
-    mapped = pii_cache.get(PiiMappingKey(pii_type=pii_category, token=actual_token))
-    return (mapped + suffix) if mapped is not None else value
+    
+    key = PiiMappingKey(pii_type=pii_category, token=actual_token)
+    mapped = pii_cache.get(key)
+    if mapped is not None:
+        return (mapped + suffix), None
+    return value, key
 
 
 @dataclass(frozen=True, slots=True)

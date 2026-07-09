@@ -30,6 +30,7 @@ class PiiMapper:
 
         # Get toàn bộ cache 1 lần — tất cả rule transformers dùng chung snapshot này
         pii_cache = self.mapping_cache.get_all()
+        missing_keys: set[PiiMappingKey] = set()
 
         for row in rows:
             for column_name in spec.pii_columns:
@@ -38,8 +39,11 @@ class PiiMapper:
                 rule = spec.get_pii_rule(column_name)
                 if rule is None:
                     continue
-                row[column_name] = rule.transformer(
+                transformed_val, missing_key = rule.transformer(
                     row[column_name], pii_cache, rule.pii_category
                 )
+                row[column_name] = transformed_val
+                if missing_key is not None:
+                    missing_keys.add(missing_key)
 
-        return rows, set()
+        return rows, missing_keys
