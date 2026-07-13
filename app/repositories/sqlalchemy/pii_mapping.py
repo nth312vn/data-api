@@ -67,12 +67,14 @@ class SQLAlchemyPiiMappingRepository:
 
         return mappings
 
-    async def fetch_all_mappings(
+    async def get_mappings_batch(
         self,
         *,
+        limit: int,
+        offset: int,
         since: datetime | None = None,
     ) -> list[PiiMappingRecord]:
-        """Fetch all mapping records, optionally created after a specific time."""
+        """Fetch a batch of mapping records using offset pagination."""
         records: list[PiiMappingRecord] = []
 
         for pii_type, model in self.mapping_models.items():
@@ -89,7 +91,8 @@ class SQLAlchemyPiiMappingRepository:
             if since is not None:
                 stmt = stmt.where(created_at_column > since)
 
-            stmt = stmt.order_by(created_at_column)
+            stmt = stmt.order_by(created_at_column, token_column)
+            stmt = stmt.limit(limit).offset(offset)
 
             result = await self.session.execute(stmt)
             for row in result.mappings():

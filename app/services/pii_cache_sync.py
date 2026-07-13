@@ -26,6 +26,7 @@ async def run_pii_cache_sync_loop(
     so a transient DB error never kills the loop.
     """
     interval = settings.pii_sync_interval_seconds
+    batch_size = settings.pii_mapping_snapshot_batch_size
     logger.info("pii_cache_sync_loop_started interval_seconds=%.1f", interval)
 
     while not stop_event.is_set():
@@ -48,6 +49,7 @@ async def run_pii_cache_sync_loop(
                 loaded = await load_pii_mapping_incremental(
                     repository=repository,
                     cache=cache,
+                    batch_size=batch_size,
                 )
                 if loaded:
                     logger.info(

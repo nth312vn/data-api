@@ -79,9 +79,7 @@ def get_pii_mapping_cache(
 ) -> InMemoryPiiMappingCache:
     global _pii_mapping_cache
     if _pii_mapping_cache is None:
-        _pii_mapping_cache = InMemoryPiiMappingCache(
-            missing_ttl_seconds=settings.pii_mapping_missing_ttl_seconds,
-        )
+        _pii_mapping_cache = InMemoryPiiMappingCache()
     return _pii_mapping_cache
 
 
@@ -108,6 +106,7 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
                 loaded = await load_pii_mapping_snapshot(
                     repository=repository,
                     cache=cache,
+                    batch_size=settings.pii_mapping_snapshot_batch_size,
                 )
             return loaded, cache.size
         except Exception as exc:

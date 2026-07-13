@@ -117,13 +117,12 @@ async def test_pii_mapping_repository_splits_misses_into_bounded_batches() -> No
 
 
 @pytest.mark.asyncio
-async def test_fetch_all_mappings_orders_by_created_at() -> None:
+async def test_get_mappings_batch_uses_offset_and_limit() -> None:
     now = datetime.now()
     session = SnapshotSession(
         [
             {"token": "customer-1", "mapped_value": "uuid-1", "created_at": now},
             {"token": "customer-2", "mapped_value": "uuid-2", "created_at": now},
-            {"token": "customer-3", "mapped_value": "uuid-3", "created_at": now},
         ]
     )
     repository = SQLAlchemyPiiMappingRepository(
@@ -131,8 +130,11 @@ async def test_fetch_all_mappings_orders_by_created_at() -> None:
         mapping_models={"customer_id": CustomerIdentityPiiMapping},
     )
 
-    records = await repository.fetch_all_mappings()
+    records = await repository.get_mappings_batch(limit=2, offset=0)
 
-    assert len(records) == 3
+    assert len(records) == 2
     assert len(session.statements) == 1
-    assert " ORDER BY customer_identity_map.created_at" in str(session.statements[0])
+    stmt_str = str(session.statements[0])
+    assert " ORDER BY customer_identity_map.created_at, customer_identity_map.customer_id" in stmt_str
+    assert " LIMIT :param" in stmt_str
+    assert " OFFSET :param" in stmt_str

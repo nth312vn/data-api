@@ -26,8 +26,10 @@ class PiiMappingRepository(Protocol):
 
 
 class PiiMappingSnapshotRepository(Protocol):
-    async def fetch_all_mappings(
+    async def get_mappings_batch(
         self,
         *,
+        limit: int,
+        offset: int,
         since: datetime | None = None,
     ) -> list[PiiMappingRecord]: ...

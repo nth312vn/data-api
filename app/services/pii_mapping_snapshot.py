@@ -6,6 +6,7 @@ async def load_pii_mapping_snapshot(
     *,
     repository: PiiMappingSnapshotRepository,
     cache: InMemoryPiiMappingCache,
+    batch_size: int,
 ) -> int:
     """Replace the in-memory mapping snapshot using bounded DB queries.
 
@@ -13,16 +14,26 @@ async def load_pii_mapping_snapshot(
     Updates cache.last_synced_at with the max created_at seen across all records.
     """
     cache.clear()
-    records = await repository.fetch_all_mappings()
-    if records:
+    
+    loaded = 0
+    offset = 0
+    while True:
+        records = await repository.get_mappings_batch(limit=batch_size, offset=offset)
+        if not records:
+            break
+            
         cache.set_many(records)
-    return len(records)
+        loaded += len(records)
+        offset += batch_size
+        
+    return loaded
 
 
 async def load_pii_mapping_incremental(
     *,
     repository: PiiMappingSnapshotRepository,
     cache: InMemoryPiiMappingCache,
+    batch_size: int,
 ) -> int:
     """Upsert records newer than cache.last_synced_at into cache without clearing.
 
@@ -33,7 +44,15 @@ async def load_pii_mapping_incremental(
     if since is None:
         return 0
 
-    records = await repository.fetch_all_mappings(since=since)
-    if records:
+    loaded = 0
+    offset = 0
+    while True:
+        records = await repository.get_mappings_batch(since=since, limit=batch_size, offset=offset)
+        if not records:
+            break
+            
         cache.set_many(records)
-    return len(records)
+        loaded += len(records)
+        offset += batch_size
+        
+    return loaded

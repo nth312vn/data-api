@@ -15,12 +15,14 @@ class FakeSnapshotRepository:
     ) -> None:
         self.records = records
 
-    async def fetch_all_mappings(
+    async def get_mappings_batch(
         self,
         *,
+        limit: int,
+        offset: int,
         since: Any = None,
     ) -> list[PiiMappingRecord]:
-        return self.records
+        return self.records[offset : offset + limit]
 
 
 @pytest.mark.asyncio
@@ -40,6 +42,7 @@ async def test_snapshot_replaces_cache_and_loads_each_batch() -> None:
     loaded = await load_pii_mapping_snapshot(
         repository=repository,
         cache=cache,
+        batch_size=2,
     )
 
     assert loaded == 2

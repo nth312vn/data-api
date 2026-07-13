@@ -176,7 +176,6 @@ Important variables:
 - `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_PASSWORD`, `TRINO_HTTP_SCHEME`: Trino connection settings.
 - `TRINO_REQUEST_TIMEOUT_SECONDS`: timeout for each Trino HTTP request made by the driver.
 - `TRINO_QUERY_TIMEOUT_SECONDS`: maximum app-side runtime for one Trino query.
-- `PII_MAPPING_MISSING_TTL_SECONDS`: TTL for keys confirmed absent from the PII database.
 - `PII_MAPPING_SNAPSHOT_BATCH_SIZE`: maximum row/key count per PII database query.
 
 The API request timeout, database pool settings, database statement timeouts,
