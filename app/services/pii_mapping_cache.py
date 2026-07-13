@@ -1,32 +1,15 @@
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from time import monotonic
 
-from app.repositories.interfaces.pii_mapping import PiiMappingKey
+from collections.abc import Iterable
 
-
-@dataclass(frozen=True, slots=True)
-class _PiiCacheKey:
-    pii_type: str
-    token: str
+from app.repositories.interfaces.pii_mapping import PiiMappingKey, PiiMappingRecord
 
 
 class InMemoryPiiMappingCache:
-    def __init__(
-        self,
-        *,
-        missing_ttl_seconds: float = 60.0,
-        clock: Callable[[], float] = monotonic,
-    ) -> None:
-        if missing_ttl_seconds <= 0:
-            raise ValueError("missing_ttl_seconds must be greater than zero")
-
-        self.missing_ttl_seconds = missing_ttl_seconds
-        self._clock = clock
-        self._items: dict[_PiiCacheKey, str] = {}
-        self._missing_until: dict[_PiiCacheKey, float] = {}
-        self._next_missing_expiry: float | None = None
+    def __init__(self) -> None:
+        self.token_to_value: dict[tuple[str, str], str] = {}
+        self.value_to_token: dict[tuple[str, str], str] = {}
         self._last_synced_at: datetime | None = None
 
     @property
@@ -34,7 +17,7 @@ class InMemoryPiiMappingCache:
         """Max created_at of records loaded into cache. None if cache not yet initialized."""
         return self._last_synced_at
 
-    def update_last_synced_at(self, value: datetime) -> None:
+    def _update_last_synced_at(self, value: datetime) -> None:
         """Advance last_synced_at to value if value is newer."""
         if self._last_synced_at is None or value > self._last_synced_at:
             self._last_synced_at = value
@@ -42,81 +25,28 @@ class InMemoryPiiMappingCache:
     def get_many(self, keys: set[PiiMappingKey]) -> dict[PiiMappingKey, str]:
         values: dict[PiiMappingKey, str] = {}
         for key in keys:
-            value = self._items.get(self._cache_key(key))
+            value = self.token_to_value.get((key.pii_type, key.token))
             if value is None:
                 continue
             values[key] = value
         return values
 
-    def get_all(self) -> dict[PiiMappingKey, str]:
-        """Return a snapshot of all cached PII mappings.
-
-        Used by PiiMapper to pass the full cache to each rule's mapper function.
-        """
-        return {
-            PiiMappingKey(pii_type=k.pii_type, token=k.token): v
-            for k, v in self._items.items()
-        }
-
-    def set_many(self, values: dict[PiiMappingKey, str]) -> None:
-        for key, value in values.items():
-            cache_key = self._cache_key(key)
-            self._items[cache_key] = value
-            self._missing_until.pop(cache_key, None)
-
-    def keys_to_load(self, keys: set[PiiMappingKey]) -> set[PiiMappingKey]:
-        """Return keys that are not covered by the temporary missing-key cache."""
-        now = self._clock()
-        self._clear_expired_missing(now)
-        keys_to_load: set[PiiMappingKey] = set()
-        for key in keys:
-            cache_key = self._cache_key(key)
-            missing_until = self._missing_until.get(cache_key)
-            if missing_until is None:
-                keys_to_load.add(key)
-        return keys_to_load
-
-    def mark_missing(self, keys: set[PiiMappingKey]) -> None:
-        now = self._clock()
-        self._clear_expired_missing(now)
-        missing_until = now + self.missing_ttl_seconds
-        for key in keys:
-            cache_key = self._cache_key(key)
-            if cache_key not in self._items:
-                self._missing_until[cache_key] = missing_until
-                if (
-                    self._next_missing_expiry is None
-                    or missing_until < self._next_missing_expiry
-                ):
-                    self._next_missing_expiry = missing_until
+    def set_many(self, records: Iterable[PiiMappingRecord]) -> None:
+        for record in records:
+            cache_key = (record.pii_type, record.token)
+            value_key = (record.pii_type, record.mapped_value)
+            
+            self.token_to_value[cache_key] = record.mapped_value
+            self.value_to_token[value_key] = record.token
+            
+            if record.created_at is not None:
+                self._update_last_synced_at(record.created_at)
 
     def clear(self) -> None:
-        self._items.clear()
-        self._missing_until.clear()
-        self._next_missing_expiry = None
+        self.token_to_value.clear()
+        self.value_to_token.clear()
         self._last_synced_at = None
 
     @property
     def size(self) -> int:
-        return len(self._items)
-
-    @property
-    def missing_size(self) -> int:
-        return len(self._missing_until)
-
-    def _clear_expired_missing(self, now: float) -> None:
-        if self._next_missing_expiry is None or self._next_missing_expiry > now:
-            return
-
-        self._missing_until = {
-            key: missing_until
-            for key, missing_until in self._missing_until.items()
-            if missing_until > now
-        }
-        self._next_missing_expiry = min(
-            self._missing_until.values(),
-            default=None,
-        )
-
-    def _cache_key(self, key: PiiMappingKey) -> _PiiCacheKey:
-        return _PiiCacheKey(pii_type=key.pii_type, token=key.token)
+        return len(self.token_to_value)

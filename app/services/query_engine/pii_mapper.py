@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.repositories.interfaces.pii_mapping import PiiMappingKey
+
 from app.services.query_engine.pii_rules import QuerySpec
 from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 
@@ -24,13 +24,11 @@ class PiiMapper:
         *,
         rows: list[dict[str, Any]],
         spec: QuerySpec,
-    ) -> tuple[list[dict[str, Any]], set[PiiMappingKey]]:
+    ) -> list[dict[str, Any]]:
         if not rows or not spec.pii_columns:
-            return rows, set()
+            return rows
 
-        # Get toàn bộ cache 1 lần — tất cả rule transformers dùng chung snapshot này
-        pii_cache = self.mapping_cache.get_all()
-        missing_keys: set[PiiMappingKey] = set()
+        pii_cache = self.mapping_cache.token_to_value
 
         for row in rows:
             for column_name in spec.pii_columns:
@@ -39,11 +37,9 @@ class PiiMapper:
                 rule = spec.get_pii_rule(column_name)
                 if rule is None:
                     continue
-                transformed_val, missing_key = rule.transformer(
+                transformed_val = rule.transformer(
                     row[column_name], pii_cache, rule.pii_category
                 )
                 row[column_name] = transformed_val
-                if missing_key is not None:
-                    missing_keys.add(missing_key)
 
-        return rows, missing_keys
+        return rows

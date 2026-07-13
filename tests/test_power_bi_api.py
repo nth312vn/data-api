@@ -119,8 +119,7 @@ async def test_deeplink_api_defaults_date_range_and_forwards_normalized_filters(
         customer_id=["uuid-1,uuid-2"],
         current_user=user,
         service=cast(PowerBiDataService, service),
-        audit_logs=FakeAuditLogRepository(),
-        uow=FakeUnitOfWork(),
+        audit_logs_service=FakeAuditLogRepository(),
     )
 
     assert service.arguments == {

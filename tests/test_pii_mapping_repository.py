@@ -8,12 +8,15 @@ from app.repositories.interfaces.pii_mapping import PiiMappingKey
 from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
 
 
+from datetime import datetime
+
 class FakeResult:
-    def mappings(self) -> list[dict[str, str]]:
+    def mappings(self) -> list[dict[str, Any]]:
         return [
             {
                 "token": "customer-1",
                 "mapped_value": "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
+                "created_at": datetime.now(),
             }
         ]
 
@@ -42,21 +45,21 @@ class RecordingSession:
 
 
 class RowsResult:
-    def __init__(self, rows: list[dict[str, str]]) -> None:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
 
-    def mappings(self) -> list[dict[str, str]]:
+    def mappings(self) -> list[dict[str, Any]]:
         return self.rows
 
 
 class SnapshotSession:
-    def __init__(self, result_rows: list[list[dict[str, str]]]) -> None:
+    def __init__(self, result_rows: list[dict[str, Any]]) -> None:
         self.result_rows = result_rows
         self.statements: list[Any] = []
 
     async def execute(self, stmt: Any) -> RowsResult:
         self.statements.append(stmt)
-        return RowsResult(self.result_rows.pop(0))
+        return RowsResult(self.result_rows)
 
 
 def test_pii_mapping_models_are_registered_by_pii_type() -> None:
@@ -114,14 +117,13 @@ async def test_pii_mapping_repository_splits_misses_into_bounded_batches() -> No
 
 
 @pytest.mark.asyncio
-async def test_snapshot_uses_bounded_keyset_queries() -> None:
+async def test_fetch_all_mappings_orders_by_created_at() -> None:
+    now = datetime.now()
     session = SnapshotSession(
         [
-            [
-                {"token": "customer-1", "mapped_value": "uuid-1"},
-                {"token": "customer-2", "mapped_value": "uuid-2"},
-            ],
-            [{"token": "customer-3", "mapped_value": "uuid-3"}],
+            {"token": "customer-1", "mapped_value": "uuid-1", "created_at": now},
+            {"token": "customer-2", "mapped_value": "uuid-2", "created_at": now},
+            {"token": "customer-3", "mapped_value": "uuid-3", "created_at": now},
         ]
     )
     repository = SQLAlchemyPiiMappingRepository(
@@ -129,15 +131,8 @@ async def test_snapshot_uses_bounded_keyset_queries() -> None:
         mapping_models={"customer_id": CustomerIdentityPiiMapping},
     )
 
-    batches = [
-        batch
-        async for batch in repository.iter_snapshot_batches(
-            batch_size=2,
-        )
-    ]
+    records = await repository.fetch_all_mappings()
 
-    assert [len(batch) for batch in batches] == [2, 1]
-    assert len(session.statements) == 2
-    assert all(" LIMIT " in str(statement) for statement in session.statements)
-    assert " ORDER BY customer_identity_map.customer_id" in str(session.statements[0])
-    assert "customer_identity_map.customer_id >" in str(session.statements[1])
+    assert len(records) == 3
+    assert len(session.statements) == 1
+    assert " ORDER BY customer_identity_map.created_at" in str(session.statements[0])

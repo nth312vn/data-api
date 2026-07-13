@@ -91,9 +91,7 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
     Retries up to pii_sync_init_max_retries times on failure with
     pii_sync_init_retry_delay_seconds between attempts.
 
-    If all retries fail, logs a critical error and returns (0, 0) so the app
-    can still start. The background sync loop will detect last_synced_at=None
-    and perform a recovery snapshot automatically.
+    If all retries fail, raises RuntimeError to fail the application startup.
     """
     cache = get_pii_mapping_cache(settings)
     max_retries = settings.pii_sync_init_max_retries
@@ -110,7 +108,6 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
                 loaded = await load_pii_mapping_snapshot(
                     repository=repository,
                     cache=cache,
-                    batch_size=settings.pii_mapping_snapshot_batch_size,
                 )
             return loaded, cache.size
         except Exception as exc:
@@ -125,12 +122,11 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
                 await asyncio.sleep(retry_delay)
 
     logger.critical(
-        "pii_cache_init_all_retries_failed max_retries=%d error=%s — "
-        "cache will be empty; background sync will recover",
+        "pii_cache_init_all_retries_failed max_retries=%d error=%s",
         max_retries,
         last_exc,
     )
-    return 0, 0
+    raise RuntimeError(f"PII mapping cache failed to initialize after {max_retries} retries") from last_exc
 
 
 def get_pii_mapper(

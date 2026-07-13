@@ -47,8 +47,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # Start the background incremental sync loop.
-    # If init failed (loaded=0), the loop will detect last_synced_at=None
-    # and run a full recovery snapshot on its first iteration.
     cache = get_pii_mapping_cache(settings)
     stop_event = asyncio.Event()
     sync_task = asyncio.create_task(

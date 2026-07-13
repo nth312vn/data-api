@@ -65,7 +65,8 @@ class FakePiiMappingRepository:
         self.requests.append(keys)
         return {
             key: PiiMappingRecord(
-                key=key,
+                pii_type=key.pii_type,
+                token=key.token,
                 mapped_value=value,
             )
             for key, value in self.mappings.items()
@@ -129,10 +130,10 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
     db_customer_key = PiiMappingKey("customer_id", "c" * 31 + "2")
     cache = InMemoryPiiMappingCache()
     cache.set_many(
-        {
-            cached_customer_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679",
-            db_customer_key: "adf349fb-bbfc-4102-96a1-65af0b063389",
-        },
+        [
+            PiiMappingRecord(pii_type="customer_id", token="c" * 31 + "1", mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679"),
+            PiiMappingRecord(pii_type="customer_id", token="c" * 31 + "2", mapped_value="adf349fb-bbfc-4102-96a1-65af0b063389"),
+        ]
     )
     uow = FakeUnitOfWork()
     trino = FakeTrinoClient(
@@ -198,7 +199,7 @@ async def test_query_keeps_unmapped_pii_values_when_not_in_cache() -> None:
 async def test_query_maps_value_when_present_in_cache() -> None:
     mapping_cache = InMemoryPiiMappingCache()
     mapping_cache.set_many(
-        {PiiMappingKey("customer_id", "m" * 32): "resolved-uuid"},
+        [PiiMappingRecord(pii_type="customer_id", token="m" * 32, mapped_value="resolved-uuid")]
     )
     pii_mapper = PiiMapper(mapping_cache=mapping_cache)
     service = UsersDataService(
@@ -226,7 +227,7 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
     )
     account_key = PiiMappingKey("accountid", "v" * 32)
     cache = InMemoryPiiMappingCache()
-    cache.set_many({account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679"})
+    cache.set_many([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679")])
     pii_mapper = PiiMapper(mapping_cache=cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
@@ -250,7 +251,7 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
     assert "FROM hive.wh_cpm.cpm_event_raw" in trino.sql
     assert "LEFT OUTER JOIN hive.wh_bo_hudi.t_cust_customer" in trino.sql
     assert "hive.wh_cpm.cpm_event_raw.key = :key_1" in trino.sql
-    assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
+    assert "hive.wh_cpm.cpm_event_raw.accountid IN" in trino.sql
     assert " LIMIT " in trino.sql
     assert "AS event_time" in trino.sql
     assert "AS bank_name" in trino.sql
@@ -272,7 +273,7 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
     )
     account_key = PiiMappingKey("accountid", "v" * 32)
     cache = InMemoryPiiMappingCache()
-    cache.set_many({account_key: "7c37bb4b-0e15-4fb9-b589-f57211ac1679"})
+    cache.set_many([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679")])
     pii_mapper = PiiMapper(mapping_cache=cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
@@ -315,7 +316,7 @@ async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
         ],
     )
     mapping_cache = InMemoryPiiMappingCache()
-    mapping_cache.set_many({first_key: first_uuid})
+    mapping_cache.set_many([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value=first_uuid)])
     pii_mapper = PiiMapper(mapping_cache=mapping_cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
@@ -342,7 +343,7 @@ async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
     ]
     assert response.missing_mappings == []
     assert trino.sql is not None
-    assert "hive.wh_cpm.cpm_event_raw.accountid IN" not in trino.sql
+    assert "hive.wh_cpm.cpm_event_raw.accountid IN" in trino.sql
     assert "lower(element_at(hive.wh_cpm.cpm_event_raw.segmentation" in trino.sql
     assert "lower(CASE WHEN" in trino.sql
     assert " LIMIT " in trino.sql

@@ -12,9 +12,10 @@ class PiiMappingKey:
 
 @dataclass(frozen=True, slots=True)
 class PiiMappingRecord:
-    key: PiiMappingKey
+    pii_type: str
+    token: str
     mapped_value: str
-    created_at: datetime | None = field(default=None)
+    created_at: datetime | None = None
 
 
 class PiiMappingRepository(Protocol):
@@ -25,15 +26,8 @@ class PiiMappingRepository(Protocol):
 
 
 class PiiMappingSnapshotRepository(Protocol):
-    def iter_snapshot_batches(
+    async def fetch_all_mappings(
         self,
         *,
-        batch_size: int,
-    ) -> AsyncIterator[dict[PiiMappingKey, PiiMappingRecord]]: ...
-
-    def iter_incremental_batches(
-        self,
-        *,
-        since: datetime,
-        batch_size: int,
-    ) -> AsyncIterator[dict[PiiMappingKey, PiiMappingRecord]]: ...
+        since: datetime | None = None,
+    ) -> list[PiiMappingRecord]: ...

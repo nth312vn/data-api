@@ -51,11 +51,11 @@ class BaseQueryService:
         if not original_values:
             return ()
         lower_values = {v.casefold() for v in original_values}
-        cache = self.pii_mapper.mapping_cache.get_all()
+        cache = self.pii_mapper.mapping_cache.value_to_token
         tokens = [
-            key.token
-            for key, val in cache.items()
-            if key.pii_type == pii_category and val.casefold() in lower_values
+            token
+            for (pii_type, mapped_value), token in cache.items()
+            if pii_type == pii_category and mapped_value.casefold() in lower_values
         ]
         if not tokens:
             # Return a dummy token so the query will return an empty result
@@ -69,23 +69,12 @@ class BaseQueryService:
         spec: QuerySpec,
     ) -> DataRowsResponse:
         rows = await self.trino.execute(spec.statement)
-        mapped_rows, missing_keys = await self.pii_mapper.map_pii_fields(
+        mapped_rows = await self.pii_mapper.map_pii_fields(
             rows=rows,
             spec=spec,
         )
 
-        missing_mappings = [
-            MissingPiiMapping(
-                pii_type=key.pii_type,
-                token=key.token,
-            )
-            for key in sorted(
-                missing_keys,
-                key=lambda key: (key.pii_type, key.token),
-            )
-        ]
-
         return DataRowsResponse(
             rows=mapped_rows,
-            missing_mappings=missing_mappings,
+            missing_mappings=[],
         )
