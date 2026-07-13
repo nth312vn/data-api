@@ -22,7 +22,7 @@ async def load_pii_mapping_snapshot(
         if not records:
             break
             
-        cache.set_many(records)
+        cache.add_records(records)
         loaded += len(records)
         offset += batch_size
         
@@ -51,7 +51,7 @@ async def load_pii_mapping_incremental(
         if not records:
             break
             
-        cache.set_many(records)
+        cache.add_records(records)
         loaded += len(records)
         offset += batch_size
         

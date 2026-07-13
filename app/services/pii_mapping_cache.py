@@ -8,8 +8,8 @@ from app.repositories.interfaces.pii_mapping import PiiMappingKey, PiiMappingRec
 
 class InMemoryPiiMappingCache:
     def __init__(self) -> None:
-        self.token_to_value: dict[tuple[str, str], str] = {}
-        self.value_to_token: dict[tuple[str, str], str] = {}
+        self.hashmap_token_to_value: dict[tuple[str, str], str] = {}
+        self.hashmap_value_to_token: dict[tuple[str, str], str] = {}
         self._last_synced_at: datetime | None = None
 
     @property
@@ -22,31 +22,28 @@ class InMemoryPiiMappingCache:
         if self._last_synced_at is None or value > self._last_synced_at:
             self._last_synced_at = value
 
-    def get_many(self, keys: set[PiiMappingKey]) -> dict[PiiMappingKey, str]:
-        values: dict[PiiMappingKey, str] = {}
-        for key in keys:
-            value = self.token_to_value.get((key.pii_type, key.token))
-            if value is None:
-                continue
-            values[key] = value
-        return values
+    def get_hashmap_token_to_value(self) -> dict[tuple[str, str], str]:
+        return self.hashmap_token_to_value
 
-    def set_many(self, records: Iterable[PiiMappingRecord]) -> None:
+    def get_hashmap_value_to_token(self) -> dict[tuple[str, str], str]:
+        return self.hashmap_value_to_token
+
+    def add_records(self, records: Iterable[PiiMappingRecord]) -> None:
         for record in records:
             cache_key = (record.pii_type, record.token)
             value_key = (record.pii_type, record.mapped_value)
             
-            self.token_to_value[cache_key] = record.mapped_value
-            self.value_to_token[value_key] = record.token
+            self.hashmap_token_to_value[cache_key] = record.mapped_value
+            self.hashmap_value_to_token[value_key] = record.token
             
             if record.created_at is not None:
                 self._update_last_synced_at(record.created_at)
 
     def clear(self) -> None:
-        self.token_to_value.clear()
-        self.value_to_token.clear()
+        self.hashmap_token_to_value.clear()
+        self.hashmap_value_to_token.clear()
         self._last_synced_at = None
 
     @property
     def size(self) -> int:
-        return len(self.token_to_value)
+        return len(self.hashmap_token_to_value)

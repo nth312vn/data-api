@@ -31,7 +31,7 @@ async def test_snapshot_replaces_cache_and_loads_each_batch() -> None:
     first_key = PiiMappingKey("customer_id", "customer-1")
     second_key = PiiMappingKey("customer_id", "customer-2")
     cache = InMemoryPiiMappingCache()
-    cache.set_many([PiiMappingRecord(pii_type="customer_id", token="old", mapped_value="old-uuid")])
+    cache.add_records([PiiMappingRecord(pii_type="customer_id", token="old", mapped_value="old-uuid")])
     repository = FakeSnapshotRepository(
         [
             PiiMappingRecord(pii_type="customer_id", token="customer-1", mapped_value="uuid-1"),
@@ -46,10 +46,9 @@ async def test_snapshot_replaces_cache_and_loads_each_batch() -> None:
     )
 
     assert loaded == 2
-    assert cache.get_many({old_key}) == {}
-    assert cache.get_many({first_key, second_key}) == {
-        first_key: "uuid-1",
-        second_key: "uuid-2",
+    assert cache.get_hashmap_token_to_value() == {
+        ("customer_id", "customer-1"): "uuid-1",
+        ("customer_id", "customer-2"): "uuid-2",
     }
 
 
@@ -58,7 +57,7 @@ def test_mapping_cache_separates_pii_types() -> None:
     phone_key = PiiMappingKey("phone", "shared-token")
     cache = InMemoryPiiMappingCache()
 
-    cache.set_many([PiiMappingRecord(pii_type="customer_id", token="shared-token", mapped_value="uuid-1")])
+    cache.add_records([PiiMappingRecord(pii_type="customer_id", token="shared-token", mapped_value="uuid-1")])
 
-    assert cache.get_many({customer_key, phone_key}) == {customer_key: "uuid-1"}
+    assert cache.get_hashmap_token_to_value() == {("customer_id", "shared-token"): "uuid-1"}
     assert cache.size == 1

@@ -28,7 +28,7 @@ class PiiMapper:
         if not rows or not spec.pii_columns:
             return rows
 
-        pii_cache = self.mapping_cache.token_to_value
+        pii_cache = self.mapping_cache.get_hashmap_token_to_value()
 
         for row in rows:
             for column_name in spec.pii_columns:

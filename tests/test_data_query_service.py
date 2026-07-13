@@ -129,7 +129,7 @@ async def test_query_maps_pii_from_cache_and_database() -> None:
     cached_customer_key = PiiMappingKey("customer_id", "c" * 31 + "1")
     db_customer_key = PiiMappingKey("customer_id", "c" * 31 + "2")
     cache = InMemoryPiiMappingCache()
-    cache.set_many(
+    cache.add_records(
         [
             PiiMappingRecord(pii_type="customer_id", token="c" * 31 + "1", mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679"),
             PiiMappingRecord(pii_type="customer_id", token="c" * 31 + "2", mapped_value="adf349fb-bbfc-4102-96a1-65af0b063389"),
@@ -198,7 +198,7 @@ async def test_query_keeps_unmapped_pii_values_when_not_in_cache() -> None:
 @pytest.mark.asyncio
 async def test_query_maps_value_when_present_in_cache() -> None:
     mapping_cache = InMemoryPiiMappingCache()
-    mapping_cache.set_many(
+    mapping_cache.add_records(
         [PiiMappingRecord(pii_type="customer_id", token="m" * 32, mapped_value="resolved-uuid")]
     )
     pii_mapper = PiiMapper(mapping_cache=mapping_cache)
@@ -227,7 +227,7 @@ async def test_power_bi_deeplink_1_builds_topup_result_query() -> None:
     )
     account_key = PiiMappingKey("accountid", "v" * 32)
     cache = InMemoryPiiMappingCache()
-    cache.set_many([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679")])
+    cache.add_records([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679")])
     pii_mapper = PiiMapper(mapping_cache=cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
@@ -273,7 +273,7 @@ async def test_power_bi_deeplink_2_builds_topup_bank_app_query() -> None:
     )
     account_key = PiiMappingKey("accountid", "v" * 32)
     cache = InMemoryPiiMappingCache()
-    cache.set_many([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679")])
+    cache.add_records([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value="7c37bb4b-0e15-4fb9-b589-f57211ac1679")])
     pii_mapper = PiiMapper(mapping_cache=cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
@@ -316,7 +316,7 @@ async def test_power_bi_pushes_non_pii_filters_and_limit_to_trino() -> None:
         ],
     )
     mapping_cache = InMemoryPiiMappingCache()
-    mapping_cache.set_many([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value=first_uuid)])
+    mapping_cache.add_records([PiiMappingRecord(pii_type="accountid", token="v" * 32, mapped_value=first_uuid)])
     pii_mapper = PiiMapper(mapping_cache=mapping_cache)
     service = PowerBiDataService(
         settings=Settings(jwt_secret_key="test-secret-key-with-at-least-32-chars"),
