@@ -69,12 +69,18 @@ class BaseQueryService:
         spec: QuerySpec,
     ) -> DataRowsResponse:
         rows = await self.trino.execute(spec.statement)
-        mapped_rows = await self.pii_mapper.map_pii_fields(
+        mapped_rows, missing_mappings = await self.pii_mapper.map_pii_fields(
             rows=rows,
             spec=spec,
         )
 
+        from app.schemas.common import MissingPiiMapping
+        converted_missing_mappings = [
+            MissingPiiMapping(pii_type=k.pii_type, token=k.token)
+            for k in missing_mappings
+        ]
+
         return DataRowsResponse(
             rows=mapped_rows,
-            missing_mappings=[],
+            missing_mappings=converted_missing_mappings,
         )

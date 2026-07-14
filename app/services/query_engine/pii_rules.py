@@ -2,17 +2,25 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
-from sqlalchemy.sql import Executable
-
-PiiValueTransformer = Callable[[Any, dict[tuple[str, str], str], str], Any]
+class PiiValueTransformer(Protocol):
+    def __call__(
+        self,
+        value: Any,
+        pii_cache: dict[tuple[str, str], str],
+        pii_category: str,
+        *,
+        on_missing: Callable[[str, str], None] | None = None,
+    ) -> Any: ...
 
 
 def transform_by_token_length(
     value: Any,
     pii_cache: dict[tuple[str, str], str],
     pii_category: str,
+    *,
+    on_missing: Callable[[str, str], None] | None = None,
 ) -> Any:
     """Transform value dùng quy tắc 32/33 ký tự và lookup pii_cache theo pii_category.
 
@@ -27,11 +35,15 @@ def transform_by_token_length(
         mapped = pii_cache.get((pii_category, token))
         if mapped is not None:
             return mapped
+        if on_missing:
+            on_missing(pii_category, token)
         return value
     if len(token) == 33:
         mapped = pii_cache.get((pii_category, token[:32]))
         if mapped is not None:
             return mapped + token[32]
+        if on_missing:
+            on_missing(pii_category, token[:32])
         return value
     return value
 
@@ -43,6 +55,7 @@ def transform_when_exceeds_length(
     *,
     min_length: int,
     strip_last_character: bool = False,
+    on_missing: Callable[[str, str], None] | None = None,
 ) -> Any:
     """Transform value khi độ dài > min_length, bỏ qua các giá trị ngắn hơn.
 
@@ -65,6 +78,8 @@ def transform_when_exceeds_length(
     mapped = pii_cache.get((pii_category, actual_token))
     if mapped is not None:
         return mapped + suffix
+    if on_missing:
+        on_missing(pii_category, actual_token)
     return value
 
 
