@@ -1,9 +1,7 @@
-from typing import Any
-
 from app.core.config import Settings
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.trino.client import TrinoClient
-from app.schemas.common import DataRowsResponse, MissingPiiMapping
+from app.schemas.common import DataRowsResponse
 from app.services.query_engine.pii_mapper import PiiMapper
 from app.services.query_engine.pii_rules import QuerySpec
 
@@ -46,7 +44,6 @@ class BaseQueryService:
         self,
         *,
         original_values: tuple[str, ...],
-        pii_category: str,
     ) -> tuple[str, ...]:
         if not original_values:
             return ()
@@ -54,8 +51,8 @@ class BaseQueryService:
         cache = self.pii_mapper.mapping_cache.value_to_token
         tokens = [
             token
-            for (pii_type, mapped_value), token in cache.items()
-            if pii_type == pii_category and mapped_value.casefold() in lower_values
+            for mapped_value, token in cache.items()
+            if mapped_value.casefold() in lower_values
         ]
         if not tokens:
             # Return a dummy token so the query will return an empty result
@@ -74,13 +71,7 @@ class BaseQueryService:
             spec=spec,
         )
 
-        from app.schemas.common import MissingPiiMapping
-        converted_missing_mappings = [
-            MissingPiiMapping(pii_type=k.pii_type, token=k.token)
-            for k in missing_mappings
-        ]
-
         return DataRowsResponse(
             rows=mapped_rows,
-            missing_mappings=converted_missing_mappings,
+            missing_mappings=missing_mappings,
         )

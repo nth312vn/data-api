@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.models.audit_log import AuditLog
 from app.models.user import User
@@ -20,18 +22,19 @@ class AuditLogService:
         *,
         actor: User,
         route_name: str,
+        request_parameters: dict[str, Any],
         missing_mappings: list[MissingPiiMapping],
     ) -> None:
+        parameters = dict(request_parameters)
+        parameters["missing_mappings"] = [
+            mapping.model_dump() for mapping in missing_mappings
+        ]
         await self.audit_logs.create(
             AuditLog(
                 user_id=actor.id,
                 username=actor.username,
                 api_route=route_name,
-                parameters={
-                    "missing_mappings": [
-                        mapping.model_dump() for mapping in missing_mappings
-                    ],
-                },
+                parameters=parameters,
                 allowed=False,
                 error_message="Missing PII mapping",
             ),

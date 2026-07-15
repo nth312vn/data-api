@@ -14,21 +14,21 @@ from app.infrastructure.pii_database.session import PiiAsyncSessionFactory
 from app.infrastructure.trino.client import TrinoClient, TrinoPythonClient
 from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.user import UserRepository
-from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
-from app.services.auth import AuthService
+from app.repositories.sqlalchemy.account_map import SQLAlchemyAccountMapRepository
+from app.services.account_map_in_memory import AccountMapInMemory
 from app.services.audit_log import AuditLogService
-from app.services.query_engine import PowerBiDataService, UsersDataService, PiiMapper
+from app.services.auth import AuthService
+from app.services.pii_mapping_snapshot import load_pii_mapping_snapshot
+from app.services.query_engine import PiiMapper, PowerBiDataService, UsersDataService
 from app.services.query_engine.dynamic_routes import (
     DynamicRouteRegistry,
     DynamicRouteService,
 )
-from app.services.pii_mapping_cache import InMemoryPiiMappingCache
-from app.services.pii_mapping_snapshot import load_pii_mapping_snapshot
 from app.services.user import UserService
 
 logger = get_logger(__name__)
 
-_pii_mapping_cache: InMemoryPiiMappingCache | None = None
+_account_map_in_memory: AccountMapInMemory | None = None
 _trino_client: TrinoPythonClient | None = None
 _dynamic_route_registry: DynamicRouteRegistry | None = None
 
@@ -74,16 +74,14 @@ async def close_trino_client() -> None:
     _trino_client = None
 
 
-def get_pii_mapping_cache(
-    settings: Settings = Depends(get_settings),
-) -> InMemoryPiiMappingCache:
-    global _pii_mapping_cache
-    if _pii_mapping_cache is None:
-        _pii_mapping_cache = InMemoryPiiMappingCache()
-    return _pii_mapping_cache
+def get_account_map_in_memory() -> AccountMapInMemory:
+    global _account_map_in_memory
+    if _account_map_in_memory is None:
+        _account_map_in_memory = AccountMapInMemory()
+    return _account_map_in_memory
 
 
-async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
+async def initialize_account_map_in_memory(settings: Settings) -> tuple[int, int]:
     """Load the full PII mapping snapshot into cache at startup.
 
     Retries up to pii_sync_init_max_retries times on failure with
@@ -91,7 +89,7 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
 
     If all retries fail, raises RuntimeError to fail the application startup.
     """
-    cache = get_pii_mapping_cache(settings)
+    cache = get_account_map_in_memory()
     max_retries = settings.pii_sync_init_max_retries
     retry_delay = settings.pii_sync_init_retry_delay_seconds
     last_exc: BaseException | None = None
@@ -99,7 +97,7 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
     for attempt in range(1, max_retries + 1):
         try:
             async with PiiAsyncSessionFactory() as session:
-                repository = SQLAlchemyPiiMappingRepository(
+                repository = SQLAlchemyAccountMapRepository(
                     session=session,
                     query_batch_size=settings.pii_mapping_snapshot_batch_size,
                 )
@@ -125,11 +123,13 @@ async def initialize_pii_mapping_cache(settings: Settings) -> tuple[int, int]:
         max_retries,
         last_exc,
     )
-    raise RuntimeError(f"PII mapping cache failed to initialize after {max_retries} retries") from last_exc
+    raise RuntimeError(
+        f"PII mapping cache failed to initialize after {max_retries} retries"
+    ) from last_exc
 
 
 def get_pii_mapper(
-    mapping_cache: InMemoryPiiMappingCache = Depends(get_pii_mapping_cache),
+    mapping_cache: AccountMapInMemory = Depends(get_account_map_in_memory),
 ) -> PiiMapper:
     return PiiMapper(
         mapping_cache=mapping_cache,
@@ -191,4 +191,3 @@ def get_dynamic_route_service(
         trino=trino,
         pii_mapper=pii_mapper,
     )
-

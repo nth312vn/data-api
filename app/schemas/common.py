@@ -17,8 +17,8 @@ class ErrorDetail(BaseModel):
 
 
 class MissingPiiMapping(BaseModel):
-    pii_type: str
-    token: str
+    column_name: str
+    value: Any
 
 
 class DataRowsResponse(BaseModel):

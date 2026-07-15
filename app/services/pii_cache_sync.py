@@ -3,8 +3,8 @@ import asyncio
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.infrastructure.pii_database.session import PiiAsyncSessionFactory
-from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
-from app.services.pii_mapping_cache import InMemoryPiiMappingCache
+from app.repositories.sqlalchemy.account_map import SQLAlchemyAccountMapRepository
+from app.services.account_map_in_memory import AccountMapInMemory
 from app.services.pii_mapping_snapshot import load_pii_mapping_incremental
 
 logger = get_logger(__name__)
@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 async def run_pii_cache_sync_loop(
     *,
-    cache: InMemoryPiiMappingCache,
+    cache: AccountMapInMemory,
     settings: Settings,
     stop_event: asyncio.Event,
 ) -> None:
@@ -37,12 +37,12 @@ async def run_pii_cache_sync_loop(
             )
             # stop_event fired during sleep → exit cleanly
             break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # normal: interval elapsed, proceed to sync
 
         try:
             async with PiiAsyncSessionFactory() as session:
-                repository = SQLAlchemyPiiMappingRepository(
+                repository = SQLAlchemyAccountMapRepository(
                     session=session,
                 )
 

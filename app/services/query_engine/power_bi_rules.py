@@ -7,7 +7,6 @@ from app.services.query_engine.pii_rules import PiiColumnRule, transform_by_toke
 
 POWER_BI_ACCOUNT_PII_RULES = {
     "accountid": PiiColumnRule(
-        pii_category="accountid",
         transformer=transform_by_token_length,
     ),
 }

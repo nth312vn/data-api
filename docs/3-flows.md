@@ -42,21 +42,22 @@ Quyền của User được quy định ở cột `role` trong bảng `users` (`
 2. **Khởi tạo SQL & Truy vấn Data Warehouse:** 
    `Service` tương ứng xây dựng câu lệnh Trino SQL dựa trên các filter đầu vào, và thực thi câu lệnh SQL đó trên Data Warehouse (Trino) để lấy dữ liệu gốc. Dữ liệu gốc lúc này chứa các "Token PII" chứ chưa phải là thông tin thực.
 
-3. **In-memory Mapping (Cache Hit):** 
-   Dữ liệu gốc được tải vào Dataframe bằng **Polars**. Service đọc cấu hình mapping PII của route đó và tiến hành left-join dữ liệu với In-memory PII Cache.
-   *(Lưu ý: Lúc app vừa khởi động, một tiến trình đã fetch trước các bản ghi mapping phổ biến từ PII Database vào Cache bằng keyset-pagination để tối ưu.)*
+3. **Khởi tạo cache PII customer:**
+   Lúc app vừa khởi động, hệ thống snapshot bảng `account_map` trong PII Database vào `AccountMapInMemory`. Bộ nhớ này chỉ có hashmap thuần:
+   - `token -> mapped_value`
+   - `mapped_value -> token`
 
-4. **Cache Miss & Load từ PII Database:** 
-   Nếu quá trình join phát hiện có các PII Token bị thiếu (không có trong Cache):
-   - Service sẽ nhặt các Token thiếu đó ra.
-   - Gửi truy vấn batch (có giới hạn số lượng) tới **PII Database độc lập** để lấy giá trị thực của các Token này.
-   - Các bản ghi lấy được sẽ được thêm mới vào In-memory Cache, chia sẻ chung để các request sau (từ bất kỳ hệ thống nào) cũng dùng được.
+4. **In-memory Mapping:**
+   Service đọc cấu hình mapping PII của route và dùng trực tiếp customer cache được inject. Với mỗi row:
+   - Nếu column không tồn tại trong row thì bỏ qua.
+   - Nếu `row[column_name] is None` thì giữ nguyên `None`, không map.
+   - Nếu value khác `None` thì transformer lookup trong customer cache.
 
-5. **Negative Caching:**
-   Trường hợp query PII Database mà vẫn không tìm thấy Token đó (có thể do lỗi dữ liệu hoặc chưa sync kịp), hệ thống sẽ lưu token đó vào **Negative Cache** (Cache rỗng) với một khoảng thời gian sống nhất định (TTL). Điều này giúp hệ thống không bị spam query liên tục xuống PII Database với những Token lỗi.
+5. **Cache Miss:**
+   Nếu transformer không map được token, transformer trả `None`. `PiiMapper` chụp giá trị gốc từ `row[column_name]` vào `missing_mappings`, sau đó set giá trị của column đó thành `null` trong `rows`. Endpoint ghi audit log gồm cả request parameters và `missing_mappings`; raw value không được giữ trong cột dữ liệu trả về.
 
-6. **Ghi Log (Audit):**
-   Với những Token thực sự không tìm thấy trong DB, Service sẽ tiến hành ghi log lưu vào bảng `audit_logs` của cơ sở dữ liệu chính với `event_type=pii_mapping_missing` để phục vụ tra soát.
+6. **Fail-fast khi thiếu rule:**
+   Nếu mapper được gọi nhưng `QuerySpec` không có PII rules, hệ thống raise exception để phát hiện lỗi cấu hình sớm. Rule chỉ giữ transformer cho từng cột và không chứa metadata chọn loại cache.
 
 7. **Trả kết quả:**
-   Hoàn tất quá trình Polars DataFrame Left-Join, trả về cục JSON kết quả cuối cùng đã được bổ sung thông tin ánh xạ cho Client.
+   Trả về JSON kết quả cuối cùng với các trường PII đã map thành giá trị thật khi có mapping, hoặc `null` khi không map được.

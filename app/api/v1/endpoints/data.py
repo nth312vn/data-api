@@ -1,11 +1,11 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.dependencies.auth import get_current_user
-from app.dependencies.services import get_users_data_service, get_audit_log_service
+from app.dependencies.services import get_audit_log_service, get_users_data_service
 from app.models.user import User
 from app.schemas.common import DataRowsResponse
-from app.services.query_engine import UsersDataService
 from app.services.audit_log import AuditLogService
+from app.services.query_engine import UsersDataService
 
 router = APIRouter()
 
@@ -28,6 +28,7 @@ async def list_users_data(
             audit_logs_service.audit_missing_mappings,
             actor=current_user,
             route_name="data.users",
+            request_parameters={"limit": limit, "offset": offset},
             missing_mappings=response.missing_mappings,
         )
     return response

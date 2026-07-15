@@ -3,12 +3,12 @@ from datetime import date
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.dependencies.auth import get_current_user
-from app.dependencies.services import get_power_bi_service, get_audit_log_service
+from app.dependencies.services import get_audit_log_service, get_power_bi_service
 from app.models.user import User
 from app.schemas.common import DataRowsResponse
 from app.schemas.power_bi import PowerBiDeeplinkRequest, default_start_date
-from app.services.query_engine import PowerBiDataService
 from app.services.audit_log import AuditLogService
+from app.services.query_engine import PowerBiDataService
 
 router = APIRouter()
 
@@ -48,6 +48,7 @@ async def get_deeplink_1(
             audit_logs_service.audit_missing_mappings,
             actor=current_user,
             route_name="power_bi.deeplink_1",
+            request_parameters=request.model_dump(mode="json"),
             missing_mappings=response.missing_mappings,
         )
     return response
@@ -88,6 +89,7 @@ async def get_deeplink_2(
             audit_logs_service.audit_missing_mappings,
             actor=current_user,
             route_name="power_bi.deeplink_2",
+            request_parameters=request.model_dump(mode="json"),
             missing_mappings=response.missing_mappings,
         )
     return response

@@ -26,18 +26,16 @@ Flow:
 
 1. A client calls a route such as `GET /api/v1/data/users`.
 2. The service builds the Trino SQL internally from fixed route config.
-3. The service applies each route's PII token rules, then left-joins resolved
-   mappings into the result with a Polars DataFrame.
-4. At application startup, mapping tables are snapshotted into the independent
-   in-memory PII cache using bounded, keyset-paginated queries.
-5. It resolves mappings from that in-memory cache first. Request misses are loaded
-   from the separate PII mapping database in bounded batches and added to the cache.
-   Cache entries are keyed by PII type and token, so every source system shares the
-   same mapping instead of creating a separate cache entry per system.
-6. Keys absent from the PII database are held in a temporary negative cache. Until
-   its TTL expires, repeated requests for only those keys do not query the PII DB.
-7. The PII database can contain many mapping tables with different schemas, modeled in `app/pii_models`.
-8. The main application database only stores audit logs. If a mapping is still missing, the service writes an `audit_logs` record with `event_type=pii_mapping_missing`.
+3. The service applies each route's PII token rules using the customer mapping
+   cache.
+4. At application startup, `account_map` is snapshotted into one in-memory
+   customer PII cache using bounded queries.
+5. The cache contains plain key/value maps: `token -> mapped_value` and
+   `mapped_value -> token`.
+6. A new PII source should define its own model, repository, cache, and service
+   wiring instead of extending the customer repository.
+7. When a non-null token cannot be mapped, the response field is returned as
+   `null` instead of leaking or preserving the raw token.
 
 Example:
 
@@ -72,17 +70,12 @@ curl --get http://localhost:8000/api/v1/power_bi/deeplink_2 \
   -H "Authorization: Bearer <access_token>"
 ```
 
-Each PII source declares its own table and columns as a model class. These
-models describe existing tables in the independent PII database; they are not
-part of the main application Alembic migrations.
+The customer PII model describes an existing table in the independent PII
+database; it is not part of the main application Alembic migrations.
 
 ```python
-class CustomerIdentityPiiMapping(PiiMappingModelMixin, PiiBase):
-    __tablename__ = "customer_identity_map"
-
-    __pii_type__ = "customer_id"
-    __pii_token_attr__ = "customer_id"
-    __pii_value_attr__ = "uuid"
+class CustomerIdentityPiiMapping(PiiBase):
+    __tablename__ = "account_map"
 
     customer_id: Mapped[str] = mapped_column(Text, primary_key=True)
     uuid: Mapped[str] = mapped_column(CHAR(36), nullable=False)

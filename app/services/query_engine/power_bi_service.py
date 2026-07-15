@@ -1,11 +1,10 @@
 from datetime import date
-from typing import Any
 
 from app.schemas.common import DataRowsResponse
+from app.services.query_engine.base_service import BaseQueryService
 from app.services.query_engine.pii_rules import QuerySpec
 from app.services.query_engine.power_bi_query import build_power_bi_deeplink_query
 from app.services.query_engine.power_bi_rules import POWER_BI_ACCOUNT_PII_RULES
-from app.services.query_engine.base_service import BaseQueryService
 
 
 class PowerBiDataService(BaseQueryService):
@@ -21,7 +20,6 @@ class PowerBiDataService(BaseQueryService):
     ) -> DataRowsResponse:
         account_tokens = self._get_tokens_by_original_values(
             original_values=customer_ids,
-            pii_category="accountid",
         )
         spec = QuerySpec(
             route_name="power_bi.deeplink_1",
@@ -51,7 +49,6 @@ class PowerBiDataService(BaseQueryService):
     ) -> DataRowsResponse:
         account_tokens = self._get_tokens_by_original_values(
             original_values=customer_ids,
-            pii_category="accountid",
         )
         spec = QuerySpec(
             route_name="power_bi.deeplink_2",

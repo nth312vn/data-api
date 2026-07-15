@@ -1,14 +1,12 @@
+from datetime import datetime
 from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.pii_models import PII_MAPPING_MODELS, CustomerIdentityPiiMapping
-from app.repositories.interfaces.pii_mapping import PiiMappingKey
-from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
+from app.pii_models import CustomerIdentityPiiMapping, PiiBase
+from app.repositories.sqlalchemy.account_map import SQLAlchemyAccountMapRepository
 
-
-from datetime import datetime
 
 class FakeResult:
     def mappings(self) -> list[dict[str, Any]]:
@@ -62,16 +60,12 @@ class SnapshotSession:
         return RowsResult(self.result_rows)
 
 
-def test_pii_mapping_models_are_registered_by_pii_type() -> None:
-    assert PII_MAPPING_MODELS["customer_id"] is CustomerIdentityPiiMapping
-
-
 def test_customer_identity_mapping_uses_customer_id_text_and_uuid_value() -> None:
     customer_id_column = CustomerIdentityPiiMapping.__table__.c.customer_id
     uuid_column = CustomerIdentityPiiMapping.__table__.c.uuid
 
-    assert CustomerIdentityPiiMapping.__pii_token_attr__ == "customer_id"
-    assert CustomerIdentityPiiMapping.__pii_value_attr__ == "uuid"
+    assert CustomerIdentityPiiMapping.__tablename__ == "account_map"
+    assert CustomerIdentityPiiMapping.__bases__ == (PiiBase,)
     assert str(customer_id_column.type) == "TEXT"
     assert str(uuid_column.type) == "CHAR(36)"
 
@@ -79,35 +73,31 @@ def test_customer_identity_mapping_uses_customer_id_text_and_uuid_value() -> Non
 @pytest.mark.asyncio
 async def test_pii_mapping_repository_uses_model_specific_table_and_columns() -> None:
     session = FakeSession()
-    repository = SQLAlchemyPiiMappingRepository(
+    repository = SQLAlchemyAccountMapRepository(
         session=cast(AsyncSession, session),
-        mapping_models={"customer_id": CustomerIdentityPiiMapping},
     )
 
-    key = PiiMappingKey(
-        pii_type="customer_id",
-        token="customer-1",
+    mappings = await repository.get_many(
+        tokens={"customer-1"},
     )
-    mappings = await repository.get_many({key})
 
-    assert mappings[key].mapped_value == "7c37bb4b-0e15-4fb9-b589-f57211ac1679"
+    assert mappings["customer-1"].mapped_value == "7c37bb4b-0e15-4fb9-b589-f57211ac1679"
     assert session.sql is not None
-    assert "FROM customer_identity_map" in session.sql
-    assert "customer_identity_map.customer_id AS token" in session.sql
-    assert "customer_identity_map.uuid AS mapped_value" in session.sql
+    assert "FROM account_map" in session.sql
+    assert "account_map.customer_id AS token" in session.sql
+    assert "account_map.uuid AS mapped_value" in session.sql
 
 
 @pytest.mark.asyncio
 async def test_pii_mapping_repository_splits_misses_into_bounded_batches() -> None:
     session = RecordingSession()
-    repository = SQLAlchemyPiiMappingRepository(
+    repository = SQLAlchemyAccountMapRepository(
         session=cast(AsyncSession, session),
-        mapping_models={"customer_id": CustomerIdentityPiiMapping},
         query_batch_size=2,
     )
-    keys = {PiiMappingKey("customer_id", f"customer-{index}") for index in range(5)}
+    tokens = {f"customer-{index}" for index in range(5)}
 
-    await repository.get_many(keys)
+    await repository.get_many(tokens=tokens)
 
     assert len(session.statements) == 3
     assert [
@@ -125,16 +115,18 @@ async def test_get_mappings_batch_uses_offset_and_limit() -> None:
             {"token": "customer-2", "mapped_value": "uuid-2", "created_at": now},
         ]
     )
-    repository = SQLAlchemyPiiMappingRepository(
+    repository = SQLAlchemyAccountMapRepository(
         session=cast(AsyncSession, session),
-        mapping_models={"customer_id": CustomerIdentityPiiMapping},
     )
 
-    records = await repository.get_mappings_batch(limit=2, offset=0)
+    records = await repository.get_mappings_batch(
+        limit=2,
+        offset=0,
+    )
 
     assert len(records) == 2
     assert len(session.statements) == 1
     stmt_str = str(session.statements[0])
-    assert " ORDER BY customer_identity_map.created_at, customer_identity_map.customer_id" in stmt_str
+    assert " ORDER BY account_map.created_at, account_map.customer_id" in stmt_str
     assert " LIMIT :param" in stmt_str
     assert " OFFSET :param" in stmt_str

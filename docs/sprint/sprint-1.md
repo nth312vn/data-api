@@ -17,7 +17,7 @@ Refactor lại hệ thống PII Mapping Cache để:
 
 ## Phân tích Codebase hiện tại
 
-### 1. `app/services/pii_mapping_cache.py`
+### 1. `app/services/account_map_in_memory.py`
 
 Cache hiện tại lưu:
 ```python
@@ -26,7 +26,7 @@ self._items: dict[_PiiCacheKey, str]  # (pii_type, token) → mapped_value
 
 Chỉ tra cứu được **1 chiều** (token → value). Phần `_get_tokens_by_original_values` trong `base_service.py` phải **linear scan toàn bộ cache** để tìm token từ value — O(n) mỗi lần lookup.
 
-### 2. `app/repositories/sqlalchemy/pii_mapping.py`
+### 2. `app/repositories/sqlalchemy/account_map.py`
 
 Có 2 hàm gần như **copy-paste nhau**:
 - `iter_snapshot_batches`: keyset-pagination không có `since` filter
@@ -40,7 +40,7 @@ Hàm `map_pii_fields` nhận `pii_cache: dict[PiiMappingKey, str]` (snapshot fla
 
 ### 4. `app/main.py` — lifespan
 
-Hiện tại khi `initialize_pii_mapping_cache` thất bại sau toàn bộ retries, nó **chỉ log critical và trả về (0, 0)** — app vẫn khởi động bình thường, background sync loop sẽ "recover". Đây là điểm bị task yêu cầu thay đổi: phải **stop app** khi không load được.
+Hiện tại khi `initialize_account_map_in_memory` thất bại sau toàn bộ retries, nó **chỉ log critical và trả về (0, 0)** — app vẫn khởi động bình thường, background sync loop sẽ "recover". Đây là điểm bị task yêu cầu thay đổi: phải **stop app** khi không load được.
 
 ---
 
@@ -49,12 +49,12 @@ Hiện tại khi `initialize_pii_mapping_cache` thất bại sau toàn bộ retr
 ### Task 1 — Bắt buộc load snapshot trước khi app start, fail hard nếu không load được
 
 **Files ảnh hưởng:**
-- `app/dependencies/services.py` — hàm `initialize_pii_mapping_cache`
+- `app/dependencies/services.py` — hàm `initialize_account_map_in_memory`
 - `app/main.py` — hàm `lifespan`
 
 **Thay đổi:**
 
-Hiện tại `initialize_pii_mapping_cache` sau khi hết retries thì log critical và **return (0, 0)**:
+Hiện tại `initialize_account_map_in_memory` sau khi hết retries thì log critical và **return (0, 0)**:
 ```python
 # Hiện tại — app tiếp tục khởi động dù cache rỗng
 logger.critical("pii_cache_init_all_retries_failed ...")
@@ -83,9 +83,9 @@ Trong `lifespan`, bỏ comment "If init failed (loaded=0)..." vì scenario đó 
 
 ---
 
-### Task 2 — Dual hashmap trong `InMemoryPiiMappingCache`
+### Task 2 — Dual hashmap trong `AccountMapInMemory`
 
-**File:** `app/services/pii_mapping_cache.py`
+**File:** `app/services/account_map_in_memory.py`
 
 #### Phân tích thiết kế `created_at` per-entry
 
@@ -254,7 +254,7 @@ Cập nhật `base_service.py` — bỏ xử lý `missing_keys`.
 ### Task 4 — Gộp `iter_snapshot_batches` + `iter_incremental_batches` trong repository
 
 **Files ảnh hưởng:**
-- `app/repositories/sqlalchemy/pii_mapping.py`
+- `app/repositories/sqlalchemy/account_map.py`
 - `app/repositories/interfaces/pii_mapping.py`
 
 **Thay đổi:**
@@ -341,13 +341,13 @@ Lý do: bắt đầu từ layer thấp nhất (repository) lên trên, tránh co
 | File | Loại thay đổi |
 |------|--------------|
 | `app/repositories/interfaces/pii_mapping.py` | Sửa Protocol: gộp 2 method → 1 |
-| `app/repositories/sqlalchemy/pii_mapping.py` | Gộp 2 hàm iterator, đơn giản hóa loop |
-| `app/services/pii_mapping_cache.py` | Dual hashmap, bỏ negative cache logic |
+| `app/repositories/sqlalchemy/account_map.py` | Gộp 2 hàm iterator, đơn giản hóa loop |
+| `app/services/account_map_in_memory.py` | Dual hashmap, bỏ negative cache logic |
 | `app/services/pii_mapping_snapshot.py` | Update caller dùng `iter_batches` |
 | `app/services/query_engine/pii_mapper.py` | Bỏ missing_keys, đơn giản hóa return |
 | `app/services/query_engine/pii_rules.py` | Update `PiiValueTransformer` type |
 | `app/services/query_engine/base_service.py` | Bỏ missing_keys handling, dùng `get_all_by_value` |
-| `app/dependencies/services.py` | `initialize_pii_mapping_cache` raise thay vì return (0,0) |
+| `app/dependencies/services.py` | `initialize_account_map_in_memory` raise thay vì return (0,0) |
 | `app/main.py` | lifespan không cần handle loaded=0 nữa |
 | `tests/` | Update tất cả tests liên quan đến cache và repository |
 

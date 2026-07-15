@@ -1,6 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,8 +17,8 @@ from app.core.metrics import (
 )
 from app.dependencies.services import (
     close_trino_client,
-    get_pii_mapping_cache,
-    initialize_pii_mapping_cache,
+    get_account_map_in_memory,
+    initialize_account_map_in_memory,
 )
 from app.middlewares.request_id import RequestIDMiddleware
 from app.middlewares.timeout import RequestTimeoutMiddleware
@@ -38,16 +38,16 @@ _metrics_server: MetricsServer | None = None
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger = get_logger(__name__)
     logger.info("application_starting")
-    loaded, cached = await initialize_pii_mapping_cache(settings)
+    loaded, cached = await initialize_account_map_in_memory(settings)
     logger.info(
-        "pii_mapping_cache_initialized loaded=%d cached=%d batch_size=%d",
+        "account_map_in_memory_initialized loaded=%d cached=%d batch_size=%d",
         loaded,
         cached,
         settings.pii_mapping_snapshot_batch_size,
     )
 
     # Start the background incremental sync loop.
-    cache = get_pii_mapping_cache(settings)
+    cache = get_account_map_in_memory()
     stop_event = asyncio.Event()
     sync_task = asyncio.create_task(
         run_pii_cache_sync_loop(

@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.logging import get_logger
 from app.infrastructure.trino.client import TrinoClient
+from app.schemas.common import MissingPiiMapping
+from app.services.query_engine.pii_mapper import PiiMapper
 from app.services.query_engine.pii_rules import (
     PiiColumnRule,
     QuerySpec,
     transform_by_token_length,
 )
-from app.services.query_engine.pii_mapper import PiiMapper
 
 logger = get_logger(__name__)
 
@@ -20,12 +21,13 @@ logger = get_logger(__name__)
 @dataclass
 class DynamicRouteConfig:
     """Configuration for a dynamically created API route."""
+
     path: str
     sql_template: str
     path_params: list[str]
     column_pii_rules: dict[str, PiiColumnRule]
     description: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     lab_test_result: list[dict[str, Any]] | None = None
 
 
@@ -90,19 +92,18 @@ class DynamicRouteService:
         path: str,
         sql: str,
         path_params: list[str],
-        pii_rules: dict[str, str],
+        pii_columns: list[str],
         description: str,
         lab_test: bool = False,
         lab_test_params: dict[str, str] | None = None,
     ) -> DynamicRouteConfig:
         """Create a dynamic route and optionally run a lab test."""
-        # Build PII column rules from category strings
-        column_pii_rules: dict[str, PiiColumnRule] = {}
-        for column_name, pii_category in pii_rules.items():
-            column_pii_rules[column_name] = PiiColumnRule(
-                pii_category=pii_category,
+        column_pii_rules = {
+            column_name: PiiColumnRule(
                 transformer=transform_by_token_length,
             )
+            for column_name in pii_columns
+        }
 
         config = DynamicRouteConfig(
             path=path,
@@ -141,7 +142,11 @@ class DynamicRouteService:
         *,
         path: str,
         params: dict[str, str],
-    ) -> tuple[list[dict[str, Any]], DynamicRouteConfig]:
+    ) -> tuple[
+        list[dict[str, Any]],
+        DynamicRouteConfig,
+        list[MissingPiiMapping],
+    ]:
         """Execute a dynamic route with given parameters."""
         config = self.registry.get(path)
         if config is None:
@@ -154,12 +159,13 @@ class DynamicRouteService:
             column_pii_rules=config.column_pii_rules,
         )
         rows = await self.trino.execute(spec.statement)
+        missing_mappings: list[MissingPiiMapping] = []
         if config.column_pii_rules:
-            rows, _ = await self.pii_mapper.map_pii_fields(
+            rows, missing_mappings = await self.pii_mapper.map_pii_fields(
                 rows=rows,
                 spec=spec,
             )
-        return rows, config
+        return rows, config, missing_mappings
 
     def _resolve_sql(
         self,

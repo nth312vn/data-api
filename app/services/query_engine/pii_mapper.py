@@ -1,8 +1,8 @@
 from typing import Any
 
-
+from app.schemas.common import MissingPiiMapping
+from app.services.account_map_in_memory import AccountMapInMemory
 from app.services.query_engine.pii_rules import QuerySpec
-from app.services.pii_mapping_cache import InMemoryPiiMappingCache
 
 
 class PiiMapper:
@@ -15,7 +15,7 @@ class PiiMapper:
     def __init__(
         self,
         *,
-        mapping_cache: InMemoryPiiMappingCache,
+        mapping_cache: AccountMapInMemory,
     ) -> None:
         self.mapping_cache = mapping_cache
 
@@ -24,28 +24,36 @@ class PiiMapper:
         *,
         rows: list[dict[str, Any]],
         spec: QuerySpec,
-    ) -> tuple[list[dict[str, Any]], set[Any]]:  # returns set[PiiMappingKey]
-        from app.repositories.interfaces.pii_mapping import PiiMappingKey
-        missing_mappings: set[PiiMappingKey] = set()
+    ) -> tuple[list[dict[str, Any]], list[MissingPiiMapping]]:
+        if not spec.pii_columns:
+            raise ValueError(f"Query {spec.route_name} has no PII mapping rules")
 
-        if not rows or not spec.pii_columns:
-            return rows, missing_mappings
+        if not rows:
+            return rows, []
 
-        pii_cache = self.mapping_cache.get_hashmap_token_to_value()
-
-        def on_missing(category: str, token: str) -> None:
-            missing_mappings.add(PiiMappingKey(pii_type=category, token=token))
+        token_to_value = self.mapping_cache.token_to_value
+        missing_mappings: list[MissingPiiMapping] = []
 
         for row in rows:
-            for column_name in spec.pii_columns:
+            for column_name, rule in spec.column_pii_rules.items():
                 if column_name not in row:
                     continue
-                rule = spec.get_pii_rule(column_name)
-                if rule is None:
+                value = row[column_name]
+                if value is None:
                     continue
                 transformed_val = rule.transformer(
-                    row[column_name], pii_cache, rule.pii_category, on_missing=on_missing
+                    value,
+                    token_to_value,
                 )
-                row[column_name] = transformed_val
+                if transformed_val is None:
+                    missing_mappings.append(
+                        MissingPiiMapping(
+                            column_name=column_name,
+                            value=value,
+                        )
+                    )
+                row[column_name] = (
+                    transformed_val if transformed_val is not None else None
+                )
 
         return rows, missing_mappings

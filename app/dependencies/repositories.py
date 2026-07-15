@@ -6,8 +6,8 @@ from app.dependencies.database import get_db_session, get_pii_db_session
 from app.repositories.interfaces.audit_log import AuditLogRepository
 from app.repositories.interfaces.pii_mapping import PiiMappingRepository
 from app.repositories.interfaces.user import UserRepository
+from app.repositories.sqlalchemy.account_map import SQLAlchemyAccountMapRepository
 from app.repositories.sqlalchemy.audit_log import SQLAlchemyAuditLogRepository
-from app.repositories.sqlalchemy.pii_mapping import SQLAlchemyPiiMappingRepository
 from app.repositories.sqlalchemy.user import SQLAlchemyUserRepository
 
 
@@ -17,11 +17,11 @@ def get_user_repository(
     return SQLAlchemyUserRepository(session)
 
 
-def get_pii_mapping_repository(
+def get_account_map_repository(
     session: AsyncSession = Depends(get_pii_db_session),
     settings: Settings = Depends(get_settings),
 ) -> PiiMappingRepository:
-    return SQLAlchemyPiiMappingRepository(
+    return SQLAlchemyAccountMapRepository(
         session=session,
         query_batch_size=settings.pii_mapping_snapshot_batch_size,
     )
