@@ -1,6 +1,6 @@
 # Sprint 4 - Chuẩn hóa query execution và logging thời gian xử lý
 
-**Ngày tạo:** 2026-07-23  
+**Ngày tạo:** 2026-07-23
 **Trạng thái:** Completed
 
 ---
