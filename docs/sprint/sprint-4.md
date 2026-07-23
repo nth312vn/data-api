@@ -166,16 +166,11 @@ failure hoặc cancellation. Các field tối thiểu:
 
 ```text
 query_execution_completed route_name=power_bi.deeplink_1 status=success
-duration_ms=123.456 response_type=DataRowsResponse row_count=10
-pii_applied=true missing_mapping_count=0
+duration_ms=123.456
 ```
 
-Khi lỗi:
-
-```text
-query_execution_completed route_name=power_bi.deeplink_1 status=failed
-duration_ms=42.315 error_type=ExternalServiceError pii_applied=true
-```
+Khi lỗi hoặc bị hủy, cùng event vẫn được ghi với `status=failed` hoặc
+`status=cancelled`.
 
 Quy ước:
 
@@ -221,9 +216,9 @@ Kết quả mong muốn:
 
 - Đo bằng `time.perf_counter()`; duration log theo millisecond.
 - Mỗi execution phát đúng một completion event với `status` tương ứng.
-- Success log có route name, response type, row count, PII flag và số mapping
-  bị thiếu.
-- Failure/cancellation log có route name, duration và error type rồi re-raise.
+- Mỗi log có route name, status và duration.
+- Exception được re-raise nguyên trạng; không ghi message exception vào event
+  timing.
 - Không đưa dữ liệu nhạy cảm vào log.
 
 ### Task 3 - Migrate query services và endpoints

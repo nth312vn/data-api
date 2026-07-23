@@ -1,8 +1,9 @@
 import asyncio
+import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import Any, Generic, TypeAlias, TypeVar
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -15,17 +16,12 @@ from app.services.query_engine.pii_rules import QuerySpec
 logger = get_logger(__name__)
 
 ResponseT = TypeVar("ResponseT")
-QueryRows: TypeAlias = list[dict[str, Any]]
-ResponseFactory: TypeAlias = Callable[
-    [QueryRows, tuple[MissingPiiMapping, ...]],
-    ResponseT,
-]
 
 
 @dataclass(frozen=True, slots=True)
 class QueryExecutionOutcome(Generic[ResponseT]):
     response: ResponseT
-    missing_mappings: tuple[MissingPiiMapping, ...] = field(default_factory=tuple)
+    missing_mappings: tuple[MissingPiiMapping, ...] = ()
 
 
 class BaseQueryService:
@@ -46,15 +42,19 @@ class BaseQueryService:
         self,
         *,
         spec: QuerySpec,
-        response_factory: ResponseFactory[ResponseT],
+        response_factory: Callable[
+            [list[dict[str, Any]], tuple[MissingPiiMapping, ...]],
+            ResponseT,
+        ],
     ) -> QueryExecutionOutcome[ResponseT]:
         started_at = time.perf_counter()
-        pii_applied = bool(spec.pii_columns)
+        status = "failed"
+        log_level = logging.ERROR
 
         try:
             rows = await self.trino.execute(spec.statement)
             missing_mappings: tuple[MissingPiiMapping, ...] = ()
-            if pii_applied:
+            if spec.pii_columns:
                 rows, missing = await self.pii_mapper.map_pii_fields(
                     rows=rows,
                     spec=spec,
@@ -62,41 +62,25 @@ class BaseQueryService:
                 missing_mappings = tuple(missing)
 
             response = response_factory(rows, missing_mappings)
+            status = "success"
+            log_level = logging.INFO
+            return QueryExecutionOutcome(
+                response=response,
+                missing_mappings=missing_mappings,
+            )
         except asyncio.CancelledError:
-            logger.warning(
-                "query_execution_completed route_name=%s status=cancelled "
-                "duration_ms=%.3f pii_applied=%s",
-                spec.route_name,
-                _elapsed_ms(started_at),
-                _log_bool(pii_applied),
-            )
+            status = "cancelled"
+            log_level = logging.WARNING
             raise
-        except Exception as exc:
-            logger.error(
-                "query_execution_completed route_name=%s status=failed "
-                "duration_ms=%.3f error_type=%s pii_applied=%s",
+        finally:
+            logger.log(
+                log_level,
+                "query_execution_completed route_name=%s status=%s "
+                "duration_ms=%.3f",
                 spec.route_name,
-                _elapsed_ms(started_at),
-                type(exc).__name__,
-                _log_bool(pii_applied),
+                status,
+                (time.perf_counter() - started_at) * 1000,
             )
-            raise
-
-        logger.info(
-            "query_execution_completed route_name=%s status=success "
-            "duration_ms=%.3f response_type=%s row_count=%d "
-            "pii_applied=%s missing_mapping_count=%d",
-            spec.route_name,
-            _elapsed_ms(started_at),
-            type(response).__name__,
-            len(rows),
-            _log_bool(pii_applied),
-            len(missing_mappings),
-        )
-        return QueryExecutionOutcome(
-            response=response,
-            missing_mappings=missing_mappings,
-        )
 
     def _get_tokens_by_original_values(
         self,
@@ -117,11 +101,3 @@ class BaseQueryService:
             # rather than skipping the filter entirely.
             return ("__NO_MATCH__",)
         return tuple(tokens)
-
-
-def _elapsed_ms(started_at: float) -> float:
-    return (time.perf_counter() - started_at) * 1000
-
-
-def _log_bool(value: bool) -> str:
-    return str(value).lower()

@@ -165,10 +165,6 @@ async def test_execute_supports_response_without_missing_pii_field(
     )
     assert outcome.missing_mappings == ()
     assert "route_name=data.summary status=success" in caplog.text
-    assert "response_type=RowsOnlyResponse" in caplog.text
-    assert "row_count=1" in caplog.text
-    assert "pii_applied=false" in caplog.text
-    assert "missing_mapping_count=0" in caplog.text
     assert "duration_ms=" in caplog.text
     assert "sensitive-sql-value" not in caplog.text
     assert "sensitive-row-value" not in caplog.text
@@ -225,8 +221,6 @@ async def test_execute_logs_failed_query_and_reraises(
         )
 
     assert "route_name=data.failed status=failed" in caplog.text
-    assert "error_type=RuntimeError" in caplog.text
-    assert "pii_applied=false" in caplog.text
     assert "duration_ms=" in caplog.text
     assert "SELECT secret" not in caplog.text
     assert "sensitive failure detail" not in caplog.text
@@ -257,7 +251,6 @@ async def test_execute_logs_cancelled_query_and_reraises(
         )
 
     assert "route_name=data.cancelled status=cancelled" in caplog.text
-    assert "pii_applied=false" in caplog.text
     assert "duration_ms=" in caplog.text
 
 
