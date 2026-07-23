@@ -143,6 +143,8 @@ def _normalize_route_path(path: str, *, api_v1_prefix: str) -> str:
     prefix = api_v1_prefix.rstrip("/")
     if path.startswith(prefix):
         path = path[len(prefix) :]
+    if path.startswith("/dynamic-routes"):
+        path = path[len("/dynamic-routes") :]
     return path.rstrip("/") or "/"
 
 

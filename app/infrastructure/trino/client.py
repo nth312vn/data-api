@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Protocol
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.sql import Executable
 
@@ -28,7 +28,11 @@ class TrinoColumn:
 
 
 class TrinoClient(Protocol):
-    async def execute(self, statement: str | Executable) -> list[dict[str, Any]]: ...
+    async def execute(
+        self,
+        statement: str | Executable,
+        parameters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
 
     async def get_catalogs(self) -> list[str]: ...
 
@@ -57,10 +61,14 @@ class TrinoPythonClient:
         self._engine: Any | None = None
         self._engine_lock = Lock()
 
-    async def execute(self, statement: str | Executable) -> list[dict[str, Any]]:
+    async def execute(
+        self,
+        statement: str | Executable,
+        parameters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._execute_sync, statement),
+                asyncio.to_thread(self._execute_sync, statement, parameters),
                 timeout=self.settings.trino_query_timeout_seconds,
             )
         except TimeoutError as exc:
@@ -103,14 +111,27 @@ class TrinoPythonClient:
     async def close(self) -> None:
         await asyncio.to_thread(self._close_sync)
 
-    def _execute_sync(self, statement: str | Executable) -> list[dict[str, Any]]:
+    def _execute_sync(
+        self,
+        statement: str | Executable,
+        parameters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         engine = self._get_engine()
         try:
             with engine.connect() as connection:
                 executable = (
                     text(statement) if isinstance(statement, str) else statement
                 )
-                result = connection.execute(executable)
+                if parameters:
+                    bind_rules = []
+                    for k, v in parameters.items():
+                        if isinstance(v, (list, tuple)):
+                            bind_rules.append(bindparam(k, expanding=True))
+                    if bind_rules:
+                        executable = executable.bindparams(*bind_rules)
+                    result = connection.execute(executable, parameters)
+                else:
+                    result = connection.execute(executable)
                 return [dict(row) for row in result.mappings().all()]
         except Exception:
             self._dispose_engine(engine)

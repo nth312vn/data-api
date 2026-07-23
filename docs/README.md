@@ -9,3 +9,4 @@ Vui lòng tham khảo các tệp tin dưới đây để hiểu rõ hơn về h�
 1. [Kiến trúc Dự án (1-architecture.md)](file:///d:/code/data-api/docs/1-architecture.md): Mô tả về kiến trúc phân tầng (Layered Architecture), trách nhiệm của từng thư mục và cách thức để mở rộng tính năng mới.
 2. [Công nghệ sử dụng (2-technologies.md)](file:///d:/code/data-api/docs/2-technologies.md): Danh sách các công cụ, framework và thư viện (FastAPI, PostgreSQL, Trino, Polars...) được sử dụng trong dự án cùng với lý do lựa chọn.
 3. [Luồng hoạt động (3-flows.md)](file:///d:/code/data-api/docs/3-flows.md): Giải thích chi tiết về luồng xác thực (Authentication/Authorization) và đặc biệt là luồng xử lý và ánh xạ dữ liệu nhạy cảm (PII Mapping).
+4. [Dynamic API (4-dynamic-api.md)](file:///d:/code/data-api/docs/4-dynamic-api.md): Hướng dẫn cấu hình dynamic API routes, typed parameters, và cơ chế PII mapping động (preset & custom).

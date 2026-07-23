@@ -8,22 +8,57 @@ from app.schemas.dynamic_route import (
     CreateDynamicRouteRequest,
     DynamicRouteListResponse,
     DynamicRouteResponse,
+    PiiColumnRuleSchema,
+    PiiTransformRuleSchema,
+    SqlParamSpecSchema,
 )
 from app.services.audit_log import AuditLogService
 from app.services.query_engine.dynamic_routes import (
     DynamicRouteConfig,
     DynamicRouteService,
+    PiiColumnRuleConfig,
+    PiiTransformRule,
+    SqlParamSpec,
 )
 
 router = APIRouter()
 
 
 def _config_to_response(config: DynamicRouteConfig) -> DynamicRouteResponse:
+    params_schema = {
+        name: SqlParamSpecSchema(
+            type=spec.type,
+            required=spec.required,
+            default=spec.default,
+            description=spec.description,
+        )
+        for name, spec in config.param_specs.items()
+    }
+
+    pii_rules_schema = {}
+    for col_name, rule_config in config.pii_rules_config.items():
+        custom_rules = None
+        if rule_config.custom_rules:
+            custom_rules = [
+                PiiTransformRuleSchema(
+                    when_length=r.when_length,
+                    when_min_length=r.when_min_length,
+                    token_slice=r.token_slice,
+                    suffix_slice=r.suffix_slice,
+                    strip_last_as_suffix=r.strip_last_as_suffix,
+                )
+                for r in rule_config.custom_rules
+            ]
+        pii_rules_schema[col_name] = PiiColumnRuleSchema(
+            preset=rule_config.preset,
+            custom_rules=custom_rules,
+        )
+
     return DynamicRouteResponse(
         path=config.path,
         sql=config.sql_template,
-        path_params=config.path_params,
-        pii_columns=list(config.column_pii_rules),
+        params=params_schema,
+        pii_rules=pii_rules_schema,
         description=config.description,
         created_at=config.created_at,
         lab_test_result=config.lab_test_result,
@@ -39,11 +74,40 @@ async def create_dynamic_route(
     service: DynamicRouteService = Depends(get_dynamic_route_service),
 ) -> DynamicRouteResponse:
     """Create a new dynamic API route. Optionally run a lab test."""
+    params_domain = {
+        name: SqlParamSpec(
+            type=spec.type,
+            required=spec.required,
+            default=spec.default,
+            description=spec.description,
+        )
+        for name, spec in payload.params.items()
+    }
+
+    pii_rules_domain = {}
+    for col_name, schema_rule in payload.pii_rules.items():
+        custom_rules = None
+        if schema_rule.custom_rules:
+            custom_rules = [
+                PiiTransformRule(
+                    when_length=r.when_length,
+                    when_min_length=r.when_min_length,
+                    token_slice=r.token_slice,
+                    suffix_slice=r.suffix_slice,
+                    strip_last_as_suffix=r.strip_last_as_suffix,
+                )
+                for r in schema_rule.custom_rules
+            ]
+        pii_rules_domain[col_name] = PiiColumnRuleConfig(
+            preset=schema_rule.preset,
+            custom_rules=custom_rules,
+        )
+
     config = await service.create_route(
         path=payload.path,
         sql=payload.sql,
-        path_params=payload.path_params,
-        pii_columns=payload.pii_columns,
+        params=params_domain,
+        pii_rules=pii_rules_domain,
         description=payload.description,
         lab_test=payload.lab_test,
         lab_test_params=payload.lab_test_params,

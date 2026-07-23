@@ -1,9 +1,39 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class SqlParamSpecSchema(BaseModel):
+    """Specification for a dynamic SQL parameter."""
+
+    type: Literal["string", "date", "integer", "float", "boolean", "string_list"] = Field(
+        ..., description="Type of parameter"
+    )
+    required: bool = Field(default=True, description="Whether the parameter is required")
+    default: str | None = Field(default=None, description="Default value if not provided")
+    description: str = Field(default="", description="Description of the parameter")
+
+
+class PiiTransformRuleSchema(BaseModel):
+    """Custom parameterized PII transformation rule details."""
+
+    when_length: int | None = Field(default=None, description="Only apply when length matches")
+    when_min_length: int | None = Field(default=None, description="Only apply when length exceeds min")
+    token_slice: list[int | None] | None = Field(default=None, description="[start, end] slice for token")
+    suffix_slice: list[int | None] | None = Field(default=None, description="[start, end] slice for suffix")
+    strip_last_as_suffix: bool = Field(default=False, description="Whether to treat the last character as suffix")
+
+
+class PiiColumnRuleSchema(BaseModel):
+    """PII transformation rule configuration for a column."""
+
+    preset: str | None = Field(default=None, description="Preset rule name, e.g. token_length")
+    custom_rules: list[PiiTransformRuleSchema] | None = Field(
+        default=None, description="List of custom PII mapping rules"
+    )
 
 
 class CreateDynamicRouteRequest(BaseModel):
@@ -16,14 +46,14 @@ class CreateDynamicRouteRequest(BaseModel):
     )
     sql: str = Field(
         ...,
-        description="SQL query to execute. Use {param} for path param placeholders.",
+        description="SQL query to execute. Use :param for parameterized placeholders.",
     )
-    path_params: list[str] = Field(
-        default_factory=list, description="Names of URL path parameters"
+    params: dict[str, SqlParamSpecSchema] = Field(
+        default_factory=dict, description="Names and specifications of SQL parameters"
     )
-    pii_columns: list[str] = Field(
-        default_factory=list,
-        description="Column names that require PII transformation",
+    pii_rules: dict[str, PiiColumnRuleSchema] = Field(
+        default_factory=dict,
+        description="Column names and their PII transformation rules",
     )
     description: str = Field(default="", description="Description of this route")
     lab_test: bool = Field(
@@ -40,8 +70,8 @@ class DynamicRouteResponse(BaseModel):
 
     path: str
     sql: str
-    path_params: list[str]
-    pii_columns: list[str]
+    params: dict[str, SqlParamSpecSchema]
+    pii_rules: dict[str, PiiColumnRuleSchema]
     description: str
     created_at: datetime
     lab_test_result: list[dict[str, Any]] | None = None
