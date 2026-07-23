@@ -20,7 +20,8 @@ def test_metrics_are_exposed_on_separate_prometheus_port() -> None:
 
     assert response.headers["content-type"].startswith("text/plain")
     assert "data_api_http_requests_total" in response.text
+    assert "data_api_http_request_duration_seconds" in response.text
     assert 'method="GET"' in response.text
-    assert 'path="/missing"' in response.text
-    assert 'status_code="404"' in response.text
+    assert 'handler="none"' in response.text
+    assert 'status="404"' in response.text
     assert client.get("/metrics").status_code == 404

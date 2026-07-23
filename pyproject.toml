@@ -12,6 +12,7 @@ dependencies = [
     "bcrypt>=4.0.1",
     "polars>=1.0.0",
     "prometheus-client>=0.20.0",
+    "prometheus-fastapi-instrumentator>=8.0.2,<9.0.0",
     "pydantic-settings>=2.3.4",
     "python-multipart>=0.0.9",
     "pyjwt>=2.8.0",

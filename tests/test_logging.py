@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.core.logging import configure_logging
-from app.middlewares.request_timing import RequestTimingMiddleware
+from app.core.metrics import instrument_app
 
 
 def test_default_log_file_path_uses_writable_container_path() -> None:
@@ -70,7 +70,7 @@ def test_request_timing_logs_total_api_duration(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     app = FastAPI()
-    app.add_middleware(RequestTimingMiddleware)
+    instrument_app(app)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -101,7 +101,7 @@ def test_request_timing_logs_error_response(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     app = FastAPI()
-    app.add_middleware(RequestTimingMiddleware)
+    instrument_app(app)
 
     @app.get("/failure")
     async def failure() -> None:

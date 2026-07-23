@@ -11,7 +11,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.metrics import (
     MetricsServer,
-    PrometheusMiddleware,
+    instrument_app,
     start_metrics_server,
     stop_metrics_server,
 )
@@ -21,7 +21,6 @@ from app.dependencies.services import (
     initialize_account_map_in_memory,
 )
 from app.middlewares.request_id import RequestIDMiddleware
-from app.middlewares.request_timing import RequestTimingMiddleware
 from app.middlewares.timeout import RequestTimeoutMiddleware
 from app.services.pii_cache_sync import run_pii_cache_sync_loop
 
@@ -84,13 +83,12 @@ def create_app(app_settings: Settings = settings) -> FastAPI:
         lifespan=lifespan,
     )
 
+    instrument_app(app)
     app.add_middleware(RequestIDMiddleware)
-    app.add_middleware(RequestTimingMiddleware)
     app.add_middleware(
         RequestTimeoutMiddleware,
         timeout_seconds=API_REQUEST_TIMEOUT_SECONDS,
     )
-    app.add_middleware(PrometheusMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
