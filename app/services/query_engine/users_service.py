@@ -1,10 +1,5 @@
-from typing import Any
-
-from app.schemas.common import DataRowsResponse, MissingPiiMapping
-from app.services.query_engine.base_service import (
-    BaseQueryService,
-    QueryExecutionOutcome,
-)
+from app.schemas.common import DataRowsResponse
+from app.services.query_engine.base_service import BaseQueryService
 from app.services.query_engine.pii_rules import QuerySpec
 from app.services.query_engine.users_query import build_users_query
 from app.services.query_engine.users_rules import USERS_PII_RULES
@@ -16,23 +11,18 @@ class UsersDataService(BaseQueryService):
         *,
         limit: int,
         offset: int,
-    ) -> QueryExecutionOutcome[DataRowsResponse]:
+    ) -> DataRowsResponse:
         spec = QuerySpec(
             route_name="data.users",
             statement=build_users_query(limit=limit, offset=offset),
             column_pii_rules=USERS_PII_RULES,
         )
-        return await self.execute(
+        rows = await self.trino.execute(spec.statement)
+        mapped_rows, missing_mappings = await self.pii_mapper.map_pii_fields(
+            rows=rows,
             spec=spec,
-            response_factory=_build_data_rows_response,
         )
-
-
-def _build_data_rows_response(
-    rows: list[dict[str, Any]],
-    missing_mappings: tuple[MissingPiiMapping, ...],
-) -> DataRowsResponse:
-    return DataRowsResponse(
-        rows=rows,
-        missing_mappings=list(missing_mappings),
-    )
+        return DataRowsResponse(
+            rows=mapped_rows,
+            missing_mappings=missing_mappings,
+        )

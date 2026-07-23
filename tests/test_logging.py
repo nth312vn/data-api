@@ -3,9 +3,12 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.core.logging import configure_logging
+from app.middlewares.request_timing import RequestTimingMiddleware
 
 
 def test_default_log_file_path_uses_writable_container_path() -> None:
@@ -61,3 +64,63 @@ def test_configure_logging_falls_back_when_file_path_is_not_writable(
         assert file_handlers == []
     finally:
         configure_logging("INFO", log_file_path=None)
+
+
+def test_request_timing_logs_total_api_duration(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app = FastAPI()
+    app.add_middleware(RequestTimingMiddleware)
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    with caplog.at_level(
+        logging.INFO,
+        logger="app.middlewares.request_timing",
+    ):
+        response = TestClient(app).get("/health?secret=do-not-log")
+
+    assert response.status_code == 200
+    timing_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.middlewares.request_timing"
+    ]
+    assert len(timing_logs) == 1
+    assert "api_request_completed" in timing_logs[0]
+    assert "method=GET" in timing_logs[0]
+    assert "path=/health" in timing_logs[0]
+    assert "status_code=200" in timing_logs[0]
+    assert "duration_ms=" in timing_logs[0]
+    assert "do-not-log" not in timing_logs[0]
+
+
+def test_request_timing_logs_error_response(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app = FastAPI()
+    app.add_middleware(RequestTimingMiddleware)
+
+    @app.get("/failure")
+    async def failure() -> None:
+        raise HTTPException(status_code=503, detail="service unavailable")
+
+    with caplog.at_level(
+        logging.ERROR,
+        logger="app.middlewares.request_timing",
+    ):
+        response = TestClient(app).get("/failure")
+
+    assert response.status_code == 503
+    timing_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.middlewares.request_timing"
+    ]
+    assert len(timing_logs) == 1
+    assert "api_request_completed" in timing_logs[0]
+    assert "path=/failure" in timing_logs[0]
+    assert "status_code=503" in timing_logs[0]
+    assert "duration_ms=" in timing_logs[0]

@@ -1,7 +1,4 @@
-from app.services.query_engine.base_service import (
-    BaseQueryService,
-    QueryExecutionOutcome,
-)
+from app.services.query_engine.base_service import BaseQueryService
 from app.services.query_engine.pii_mapper import PiiMapper
 from app.services.query_engine.pii_rules import (
     PiiColumnRule,
@@ -21,7 +18,6 @@ __all__ = [
     "PiiMapper",
     "PiiValueTransformer",
     "PowerBiDataService",
-    "QueryExecutionOutcome",
     "QuerySpec",
     "UsersDataService",
     "build_power_bi_deeplink_query",

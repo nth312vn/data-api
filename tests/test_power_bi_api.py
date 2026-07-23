@@ -12,7 +12,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_power_bi_service
 from app.models.user import User, UserRole
 from app.schemas.common import DataRowsResponse
-from app.services.query_engine import PowerBiDataService, QueryExecutionOutcome
+from app.services.query_engine import PowerBiDataService
 
 
 class RecordingDataQueryService:
@@ -22,11 +22,9 @@ class RecordingDataQueryService:
     async def deeplink_1(
         self,
         **arguments: Any,
-    ) -> QueryExecutionOutcome[DataRowsResponse]:
+    ) -> DataRowsResponse:
         self.arguments = arguments
-        return QueryExecutionOutcome(
-            response=DataRowsResponse(rows=[], missing_mappings=[]),
-        )
+        return DataRowsResponse(rows=[], missing_mappings=[])
 
 
 def test_deeplink_query_defaults_to_yesterday_through_today() -> None:
