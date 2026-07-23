@@ -19,16 +19,16 @@ async def list_users_data(
     service: UsersDataService = Depends(get_users_data_service),
     audit_logs_service: AuditLogService = Depends(get_audit_log_service),
 ) -> DataRowsResponse:
-    response = await service.list_users(
+    outcome = await service.list_users(
         limit=limit,
         offset=offset,
     )
-    if response.missing_mappings:
+    if outcome.missing_mappings:
         background_tasks.add_task(
             audit_logs_service.audit_missing_mappings,
             actor=current_user,
             route_name="data.users",
             request_parameters={"limit": limit, "offset": offset},
-            missing_mappings=response.missing_mappings,
+            missing_mappings=list(outcome.missing_mappings),
         )
-    return response
+    return outcome.response

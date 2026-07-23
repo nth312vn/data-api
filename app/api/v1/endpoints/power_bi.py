@@ -35,7 +35,7 @@ async def get_deeplink_1(
         "customer_id": customer_id,
     }
     request = PowerBiDeeplinkRequest.model_validate(request_data)
-    response = await service.deeplink_1(
+    outcome = await service.deeplink_1(
         start_date=request.start_date,
         end_date=request.end_date,
         limit=request.limit,
@@ -43,15 +43,15 @@ async def get_deeplink_1(
         user_agent_filters=tuple(request.user_agent),
         customer_ids=tuple(request.customer_id),
     )
-    if response.missing_mappings:
+    if outcome.missing_mappings:
         background_tasks.add_task(
             audit_logs_service.audit_missing_mappings,
             actor=current_user,
             route_name="power_bi.deeplink_1",
             request_parameters=request.model_dump(mode="json"),
-            missing_mappings=response.missing_mappings,
+            missing_mappings=list(outcome.missing_mappings),
         )
-    return response
+    return outcome.response
 
 
 @router.get("/deeplink_2", response_model=DataRowsResponse)
@@ -76,7 +76,7 @@ async def get_deeplink_2(
         "customer_id": customer_id,
     }
     request = PowerBiDeeplinkRequest.model_validate(request_data)
-    response = await service.deeplink_2(
+    outcome = await service.deeplink_2(
         start_date=request.start_date,
         end_date=request.end_date,
         limit=request.limit,
@@ -84,12 +84,12 @@ async def get_deeplink_2(
         user_agent_filters=tuple(request.user_agent),
         customer_ids=tuple(request.customer_id),
     )
-    if response.missing_mappings:
+    if outcome.missing_mappings:
         background_tasks.add_task(
             audit_logs_service.audit_missing_mappings,
             actor=current_user,
             route_name="power_bi.deeplink_2",
             request_parameters=request.model_dump(mode="json"),
-            missing_mappings=response.missing_mappings,
+            missing_mappings=list(outcome.missing_mappings),
         )
-    return response
+    return outcome.response
