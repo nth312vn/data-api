@@ -7,12 +7,14 @@ from app.core.logging import get_logger
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.repositories import (
     get_audit_log_repository,
+    get_dynamic_route_repository,
     get_user_repository,
 )
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.pii_database.session import PiiAsyncSessionFactory
 from app.infrastructure.trino.client import TrinoClient, TrinoPythonClient
 from app.repositories.interfaces.audit_log import AuditLogRepository
+from app.repositories.interfaces.dynamic_route import DynamicRouteRepository
 from app.repositories.interfaces.user import UserRepository
 from app.repositories.sqlalchemy.account_map import SQLAlchemyAccountMapRepository
 from app.services.account_map_in_memory import AccountMapInMemory
@@ -20,17 +22,14 @@ from app.services.audit_log import AuditLogService
 from app.services.auth import AuthService
 from app.services.pii_mapping_snapshot import load_pii_mapping_snapshot
 from app.services.query_engine import PiiMapper, PowerBiDataService, UsersDataService
-from app.services.query_engine.dynamic_routes import (
-    DynamicRouteRegistry,
-    DynamicRouteService,
-)
+from app.services.query_engine.dynamic_routes import DynamicRouteService
+from app.services.query_engine.sql_safety import SqlSafetyValidator
 from app.services.user import UserService
 
 logger = get_logger(__name__)
 
 _account_map_in_memory: AccountMapInMemory | None = None
 _trino_client: TrinoPythonClient | None = None
-_dynamic_route_registry: DynamicRouteRegistry | None = None
 
 
 def get_auth_service(
@@ -174,20 +173,14 @@ def get_audit_log_service(
     )
 
 
-def get_dynamic_route_registry() -> DynamicRouteRegistry:
-    global _dynamic_route_registry
-    if _dynamic_route_registry is None:
-        _dynamic_route_registry = DynamicRouteRegistry()
-    return _dynamic_route_registry
-
-
 def get_dynamic_route_service(
-    registry: DynamicRouteRegistry = Depends(get_dynamic_route_registry),
+    routes: DynamicRouteRepository = Depends(get_dynamic_route_repository),
+    uow: UnitOfWork = Depends(get_unit_of_work),
     trino: TrinoClient = Depends(get_trino_client),
-    pii_mapper: PiiMapper = Depends(get_pii_mapper),
 ) -> DynamicRouteService:
     return DynamicRouteService(
-        registry=registry,
+        routes=routes,
+        uow=uow,
         trino=trino,
-        pii_mapper=pii_mapper,
+        sql_validator=SqlSafetyValidator(),
     )

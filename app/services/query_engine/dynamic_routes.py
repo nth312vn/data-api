@@ -1,185 +1,207 @@
 from __future__ import annotations
 
-import threading
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
-from app.core.logging import get_logger
+from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
+from starlette.datastructures import QueryParams
+
+from app.core.exceptions import ConflictError, NotFoundError
+from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.trino.client import TrinoClient
-from app.schemas.common import MissingPiiMapping
-from app.services.query_engine.pii_mapper import PiiMapper
-from app.services.query_engine.pii_rules import (
-    PiiColumnRule,
-    QuerySpec,
-    transform_by_token_length,
+from app.models.dynamic_route import DynamicRoute
+from app.models.user import User
+from app.repositories.interfaces.dynamic_route import DynamicRouteRepository
+from app.schemas.dynamic_route import DynamicRouteWriteRequest
+from app.services.query_engine.dynamic_parameters import (
+    DynamicParameterDefinition,
+    build_bound_statement,
+    cast_parameter_values,
+    validate_parameter_contract,
 )
-
-logger = get_logger(__name__)
-
-
-@dataclass
-class DynamicRouteConfig:
-    """Configuration for a dynamically created API route."""
-
-    path: str
-    sql_template: str
-    path_params: list[str]
-    column_pii_rules: dict[str, PiiColumnRule]
-    description: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    lab_test_result: list[dict[str, Any]] | None = None
-
-
-class DynamicRouteRegistry:
-    """Thread-safe in-memory registry for dynamic routes.
-
-    All data is stored in memory and will be lost on application restart.
-    """
-
-    def __init__(self) -> None:
-        self._routes: dict[str, DynamicRouteConfig] = {}
-        self._lock = threading.Lock()
-
-    def register(self, config: DynamicRouteConfig) -> None:
-        """Register a new dynamic route. Overwrites existing route with same path."""
-        with self._lock:
-            self._routes[config.path] = config
-            logger.info("dynamic_route_registered path=%s", config.path)
-
-    def get(self, path: str) -> DynamicRouteConfig | None:
-        """Get a dynamic route config by path."""
-        with self._lock:
-            return self._routes.get(path)
-
-    def list_all(self) -> list[DynamicRouteConfig]:
-        """List all registered dynamic routes."""
-        with self._lock:
-            return list(self._routes.values())
-
-    def remove(self, path: str) -> bool:
-        """Remove a dynamic route. Returns True if it existed."""
-        with self._lock:
-            if path in self._routes:
-                del self._routes[path]
-                logger.info("dynamic_route_removed path=%s", path)
-                return True
-            return False
-
-    @property
-    def size(self) -> int:
-        with self._lock:
-            return len(self._routes)
+from app.services.query_engine.sql_safety import (
+    DynamicSqlError,
+    SqlSafetyValidator,
+)
 
 
 class DynamicRouteService:
-    """Service for creating and executing dynamic API routes."""
+    """Manage persisted routes and execute only revalidated canonical SQL."""
 
     def __init__(
         self,
         *,
-        registry: DynamicRouteRegistry,
+        routes: DynamicRouteRepository,
+        uow: UnitOfWork,
         trino: TrinoClient,
-        pii_mapper: PiiMapper,
+        sql_validator: SqlSafetyValidator,
     ) -> None:
-        self.registry = registry
+        self.routes = routes
+        self.uow = uow
         self.trino = trino
-        self.pii_mapper = pii_mapper
+        self.sql_validator = sql_validator
 
     async def create_route(
         self,
         *,
-        path: str,
-        sql: str,
-        path_params: list[str],
-        pii_columns: list[str],
-        description: str,
-        lab_test: bool = False,
-        lab_test_params: dict[str, str] | None = None,
-    ) -> DynamicRouteConfig:
-        """Create a dynamic route and optionally run a lab test."""
-        column_pii_rules = {
-            column_name: PiiColumnRule(
-                transformer=transform_by_token_length,
-            )
-            for column_name in pii_columns
-        }
-
-        config = DynamicRouteConfig(
-            path=path,
-            sql_template=sql,
-            path_params=path_params,
-            column_pii_rules=column_pii_rules,
-            description=description,
+        payload: DynamicRouteWriteRequest,
+        actor: User,
+    ) -> DynamicRoute:
+        validated = self.sql_validator.validate(payload.sql)
+        validate_parameter_contract(validated.parameter_names, payload.params)
+        existing = await self.routes.get_by_route(
+            prefix=payload.prefix,
+            path=payload.path,
         )
-
-        # Run lab test if requested
-        if lab_test:
-            resolved_sql = self._resolve_sql(sql, lab_test_params or {})
-            spec = QuerySpec(
-                route_name=f"dynamic.{path}",
-                statement=resolved_sql,
-                column_pii_rules=column_pii_rules,
-            )
-            rows = await self.trino.execute(spec.statement)
-            if column_pii_rules:
-                rows, _ = await self.pii_mapper.map_pii_fields(
-                    rows=rows,
-                    spec=spec,
-                )
-            config.lab_test_result = rows
-            logger.info(
-                "dynamic_route_lab_test path=%s rows=%d",
-                path,
-                len(rows),
+        if existing is not None:
+            raise ConflictError(
+                "Dynamic route already exists",
+                code="dynamic_route_exists",
             )
 
-        self.registry.register(config)
-        return config
+        try:
+            await self._run_lab_test_if_requested(
+                payload=payload,
+                canonical_sql=validated.canonical_sql,
+            )
+            route = DynamicRoute(
+                prefix=payload.prefix,
+                path=payload.path,
+                description=payload.description,
+                original_sql=payload.sql,
+                canonical_sql=validated.canonical_sql,
+                parameter_definitions=_serialize_definitions(payload.params),
+                created_by=actor.id,
+                updated_by=actor.id,
+            )
+            created = await self.routes.create(route)
+            await self.uow.commit()
+            return created
+        except IntegrityError as exc:
+            await self.uow.rollback()
+            raise ConflictError(
+                "Dynamic route already exists",
+                code="dynamic_route_exists",
+            ) from exc
+        except Exception:
+            await self.uow.rollback()
+            raise
+
+    async def list_routes(self) -> list[DynamicRoute]:
+        return await self.routes.list_all()
+
+    async def get_route(self, route_id: UUID) -> DynamicRoute:
+        route = await self.routes.get_by_id(route_id)
+        if route is None:
+            raise NotFoundError("Dynamic route")
+        return route
+
+    async def update_route(
+        self,
+        *,
+        route_id: UUID,
+        payload: DynamicRouteWriteRequest,
+        actor: User,
+    ) -> DynamicRoute:
+        route = await self.get_route(route_id)
+        validated = self.sql_validator.validate(payload.sql)
+        validate_parameter_contract(validated.parameter_names, payload.params)
+        collision = await self.routes.get_by_route(
+            prefix=payload.prefix,
+            path=payload.path,
+        )
+        if collision is not None and collision.id != route.id:
+            raise ConflictError(
+                "Dynamic route already exists",
+                code="dynamic_route_exists",
+            )
+
+        try:
+            await self._run_lab_test_if_requested(
+                payload=payload,
+                canonical_sql=validated.canonical_sql,
+            )
+            route.prefix = payload.prefix
+            route.path = payload.path
+            route.description = payload.description
+            route.original_sql = payload.sql
+            route.canonical_sql = validated.canonical_sql
+            route.parameter_definitions = _serialize_definitions(payload.params)
+            route.updated_by = actor.id
+            updated = await self.routes.update(route)
+            await self.uow.commit()
+            return updated
+        except IntegrityError as exc:
+            await self.uow.rollback()
+            raise ConflictError(
+                "Dynamic route already exists",
+                code="dynamic_route_exists",
+            ) from exc
+        except Exception:
+            await self.uow.rollback()
+            raise
+
+    async def delete_route(self, route_id: UUID) -> None:
+        route = await self.get_route(route_id)
+        try:
+            await self.routes.delete(route)
+            await self.uow.commit()
+        except Exception:
+            await self.uow.rollback()
+            raise
 
     async def execute_route(
         self,
         *,
+        prefix: str,
         path: str,
-        params: dict[str, str],
-    ) -> tuple[
-        list[dict[str, Any]],
-        DynamicRouteConfig,
-        list[MissingPiiMapping],
-    ]:
-        """Execute a dynamic route with given parameters."""
-        config = self.registry.get(path)
-        if config is None:
-            raise ValueError(f"Dynamic route not found: {path}")
+        raw_params: QueryParams,
+    ) -> list[dict[str, Any]]:
+        route = await self.routes.get_by_route(prefix=prefix, path=path)
+        if route is None:
+            raise NotFoundError("Dynamic route")
 
-        resolved_sql = self._resolve_sql(config.sql_template, params)
-        spec = QuerySpec(
-            route_name=f"dynamic.{path}",
-            statement=resolved_sql,
-            column_pii_rules=config.column_pii_rules,
-        )
-        rows = await self.trino.execute(spec.statement)
-        missing_mappings: list[MissingPiiMapping] = []
-        if config.column_pii_rules:
-            rows, missing_mappings = await self.pii_mapper.map_pii_fields(
-                rows=rows,
-                spec=spec,
-            )
-        return rows, config, missing_mappings
+        validated = self.sql_validator.validate(route.canonical_sql)
+        definitions = _deserialize_definitions(route.parameter_definitions)
+        validate_parameter_contract(validated.parameter_names, definitions)
+        parameters = cast_parameter_values(definitions, raw_params)
+        statement = build_bound_statement(validated.canonical_sql, definitions)
+        return await self.trino.execute(statement, parameters)
 
-    def _resolve_sql(
+    async def _run_lab_test_if_requested(
         self,
-        sql_template: str,
-        params: dict[str, str],
-    ) -> str:
-        """Replace {param} placeholders in SQL template with actual values.
+        *,
+        payload: DynamicRouteWriteRequest,
+        canonical_sql: str,
+    ) -> None:
+        if not payload.lab_test:
+            return
+        parameters = cast_parameter_values(payload.params, payload.lab_test_params)
+        statement = build_bound_statement(canonical_sql, payload.params)
+        await self.trino.execute(statement, parameters)
 
-        Only replaces params that are defined in the template.
-        Values are single-quoted for safety.
-        """
-        resolved = sql_template
-        for key, value in params.items():
-            # Basic SQL injection prevention: escape single quotes
-            safe_value = value.replace("'", "''")
-            resolved = resolved.replace("{" + key + "}", f"'{safe_value}'")
-        return resolved
+
+def _serialize_definitions(
+    definitions: Mapping[str, DynamicParameterDefinition],
+) -> dict[str, Any]:
+    return {
+        name: definition.model_dump(mode="json")
+        for name, definition in definitions.items()
+    }
+
+
+def _deserialize_definitions(
+    values: Mapping[str, Any],
+) -> dict[str, DynamicParameterDefinition]:
+    try:
+        return {
+            name: DynamicParameterDefinition.model_validate(definition)
+            for name, definition in values.items()
+        }
+    except (TypeError, ValidationError) as exc:
+        raise DynamicSqlError(
+            "dynamic_sql_invalid_parameter_contract",
+            "Stored parameter contract is invalid",
+        ) from exc
