@@ -32,3 +32,27 @@ def test_user_schema_contains_only_single_role_source() -> None:
     assert "full_name" not in properties
     assert "is_active" not in properties
     assert role_values == ["user", "admin"]
+
+
+def test_dynamic_management_and_runtime_paths_are_separate() -> None:
+    paths = app.openapi()["paths"]
+
+    assert "/api/v1/dynamic-routes" in paths
+    assert "/api/v1/dynamic-routes/{route_id}" in paths
+    assert "/api/v1/{prefix}/{path}" in paths
+    assert "/api/v1/dynamic-routes/{path}" not in paths
+    assert set(paths["/api/v1/dynamic-routes"]) == {"get", "post"}
+    assert set(paths["/api/v1/dynamic-routes/{route_id}"]) == {
+        "delete",
+        "get",
+        "put",
+    }
+
+
+def test_dynamic_runtime_catch_all_is_registered_last() -> None:
+    route_paths = [route.path for route in app.routes if hasattr(route, "path")]
+
+    assert route_paths.index("/api/v1/power_bi/deeplink_1") < route_paths.index(
+        "/api/v1/{prefix}/{path:path}"
+    )
+    assert route_paths[-1] == "/api/v1/{prefix}/{path:path}"

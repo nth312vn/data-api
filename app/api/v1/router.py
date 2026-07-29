@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from app.api.v1.endpoints import (
     auth,
     data,
+    dynamic_execute,
     dynamic_routes,
     health,
     power_bi,
@@ -35,6 +36,9 @@ api_router.include_router(
     dynamic_routes.router,
     prefix="/dynamic-routes",
     tags=["dynamic-routes"],
-    dependencies=[Depends(require_api_permission)],
+)
+api_router.include_router(
+    dynamic_execute.router,
+    tags=["dynamic-execution"],
 )
 
