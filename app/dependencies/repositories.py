@@ -4,10 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.dependencies.database import get_db_session, get_pii_db_session
 from app.repositories.interfaces.audit_log import AuditLogRepository
+from app.repositories.interfaces.dynamic_route import DynamicRouteRepository
 from app.repositories.interfaces.pii_mapping import PiiMappingRepository
 from app.repositories.interfaces.user import UserRepository
 from app.repositories.sqlalchemy.account_map import SQLAlchemyAccountMapRepository
 from app.repositories.sqlalchemy.audit_log import SQLAlchemyAuditLogRepository
+from app.repositories.sqlalchemy.dynamic_route import SQLAlchemyDynamicRouteRepository
 from app.repositories.sqlalchemy.user import SQLAlchemyUserRepository
 
 
@@ -31,3 +33,9 @@ def get_audit_log_repository(
     session: AsyncSession = Depends(get_db_session),
 ) -> AuditLogRepository:
     return SQLAlchemyAuditLogRepository(session)
+
+
+def get_dynamic_route_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> DynamicRouteRepository:
+    return SQLAlchemyDynamicRouteRepository(session)

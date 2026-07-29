@@ -1,7 +1,8 @@
-from app.models import AuditLog, Base, User
+from app.models import AuditLog, Base, DynamicRoute, User
 
 __all__ = [
     "AuditLog",
     "Base",
+    "DynamicRoute",
     "User",
 ]
