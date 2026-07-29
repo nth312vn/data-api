@@ -325,9 +325,9 @@ canonical_sql
 ```
 
 Database là source of truth; không preload Dynamic Route vào in-memory registry.
-Mỗi `path` có một row hiện hành duy nhất. `PUT` ghi đè row đó, còn `DELETE` là
-hard delete. `lab_test_result` chỉ tồn tại trong response của request lab test và
-không được lưu trong database.
+Mỗi cặp `(prefix, path)` có một row hiện hành duy nhất. `PUT` ghi đè row đó, còn
+`DELETE` là hard delete. `lab_test_result` chỉ tồn tại trong response của request
+lab test và không được lưu trong database.
 
 Table `dynamic_routes` có `prefix` làm namespace authorization và không có
 `pii_columns`. Dynamic API không inject/call `PiiMapper`;
@@ -335,25 +335,41 @@ Table `dynamic_routes` có `prefix` làm namespace authorization và không có
 
 ### Prefix authorization
 
-`prefix` phải khớp segment đầu tiên của `path`:
+`prefix` và `path` được lưu riêng:
 
 ```json
 {
-  "path": "power_bi/customer-sales",
+  "path": "customer-sales",
   "prefix": "power_bi"
 }
+```
+
+Execution URL được ghép thành:
+
+```text
+/api/v1/power_bi/customer-sales
 ```
 
 Rule execution:
 
 - Admin gọi được mọi prefix.
-- User thường chỉ gọi được khi `route.prefix == current_user.username`.
+- User thường chỉ gọi được khi URL `prefix == current_user.username`.
 - So sánh exact sau khi normalize lowercase.
 - User `power_bi` không gọi được prefix `power_bi_extra`.
 
-URL thật có segment đầu là `dynamic-routes`, nên execute endpoint phải load route
-từ database, lấy persisted prefix rồi áp dụng permission check. SQL chưa được
-validate hoặc execute trước khi authorization thành công.
+Hai nhóm API độc lập:
+
+```text
+Management: /api/v1/dynamic-routes
+Execution:  /api/v1/{prefix}/{path:path}
+```
+
+Execution URL có segment đầu là business prefix, nên
+`require_api_permission()` hiện tại authorize trước database lookup. Management
+API không có business prefix và bắt buộc admin-only.
+
+Dynamic execution catch-all phải được include sau static routes. Registration
+phải từ chối effective path trùng một static GET route để tránh shadowing.
 
 Pipeline:
 
@@ -393,7 +409,7 @@ Rủi ro còn lại được chấp nhận:
 
 ```json
 {
-  "path": "power_bi/customer-sales",
+  "path": "customer-sales",
   "prefix": "power_bi",
   "description": "Sales grouped by customer",
   "sql": "WITH filtered AS (SELECT customer_id, amount FROM hive.analytics.sales WHERE region = :region AND sale_date >= :start_date) SELECT customer_id, sum(amount) AS total_amount FROM filtered GROUP BY customer_id",
@@ -418,7 +434,7 @@ Rủi ro còn lại được chấp nhận:
 ### Execute Dynamic Route
 
 ```http
-GET /api/v1/dynamic-routes/power_bi/customer-sales?region=APAC&start_date=2026-07-01
+GET /api/v1/power_bi/customer-sales?region=APAC&start_date=2026-07-01
 Authorization: Bearer <access_token>
 ```
 

@@ -12,7 +12,7 @@ Sprint này làm cứng luồng định nghĩa và thực thi SQL của Dynamic 
 1. Chỉ admin/data engineer nội bộ được phép đăng ký, xem cấu hình và xóa
    Dynamic Route.
 2. Lưu Dynamic Route bền vững trong application PostgreSQL, với một bản ghi
-   hiện hành duy nhất cho mỗi `path`.
+   hiện hành duy nhất cho mỗi cặp `(prefix, path)`.
 3. Lưu `prefix` làm namespace phân quyền; user thường chỉ execute route có
    `prefix` khớp chính xác `username`, còn admin được execute mọi route.
 4. Chỉ chấp nhận đúng một câu truy vấn read-only có dạng `SELECT` hoặc
@@ -65,15 +65,16 @@ Contract `{param}` và `path_params: list[str]` hiện tại bị loại bỏ. D
 mới dùng placeholder `:param` và một object `params` khai báo kiểu dữ liệu.
 
 Dynamic Route được lưu trong application PostgreSQL, không còn phụ thuộc vào
-process memory. Có đúng một bản ghi hiện hành cho mỗi `path`:
+process memory. Có đúng một bản ghi hiện hành cho mỗi cặp `(prefix, path)`:
 
-- Create với `path` mới: insert bản ghi.
+- Create với cặp `(prefix, path)` mới: insert bản ghi.
 - Update: ghi đè SQL/config hiện tại trong cùng bản ghi, cập nhật `updated_at`
   và `updated_by`.
-- Create trùng `path`: trả conflict, không âm thầm ghi đè.
+- Create trùng `(prefix, path)`: trả conflict, không âm thầm ghi đè.
 - Delete: hard delete bản ghi.
 - Không có versioning, draft, active/disabled hoặc rollback trong sprint này.
-- `prefix` bắt buộc khớp segment đầu tiên của `path`.
+- `prefix` và `path` được lưu riêng. Effective execution path được ghép thành
+  `/{prefix}/{path}`.
 - Không lưu hoặc nhận `pii_columns`; Dynamic API chưa hỗ trợ PII mapping.
 - `lab_test_result` không được lưu trong database; chỉ là kết quả tạm thời của
   request bật `lab_test`.
@@ -256,8 +257,8 @@ nhất cho Dynamic API.
 | Cột | Kiểu | Ràng buộc | Mục đích |
 |---|---|---|---|
 | `id` | UUID | PK | Định danh bản ghi |
-| `path` | VARCHAR(500) | NOT NULL, UNIQUE | Khóa route hiện hành |
-| `prefix` | VARCHAR(50) | NOT NULL | Namespace phân quyền, khớp segment đầu của `path` |
+| `prefix` | VARCHAR(50) | NOT NULL | Namespace phân quyền và segment đầu của execution URL |
+| `path` | VARCHAR(500) | NOT NULL | Relative path phía sau prefix |
 | `description` | TEXT | NOT NULL, default `''` | Mô tả route |
 | `original_sql` | TEXT | NOT NULL | SQL admin đã nhập, chỉ để review |
 | `canonical_sql` | TEXT | NOT NULL | SQL đã parse/validate, được execute |
@@ -273,16 +274,17 @@ Không tạo `version`, `status`, `deleted_at` hoặc `lab_test_result`. Hard de
 
 Index tối thiểu:
 
-- Unique index trên `path`.
+- Unique composite index trên `(prefix, path)`.
 - Index trên `prefix`.
 - Index trên `created_by`.
 - Index trên `updated_at`.
 
 Database constraints:
 
-- `CHECK (split_part(path, '/', 1) = prefix)` để bảo vệ cả khi row được ghi
-  ngoài application service.
 - `CHECK (prefix = lower(prefix))`.
+- `CHECK (path <> '')`.
+- `CHECK (path NOT LIKE '/%' AND path NOT LIKE '%/')`.
+- `CHECK (position('//' in path) = 0)`.
 - Không tạo foreign key từ `prefix` sang `users.username`; behavior giữ giống
   authorization hiện tại, trong đó namespace được so sánh với username tại
   request time.
@@ -294,11 +296,13 @@ Quy tắc `prefix`:
 
 - Bắt buộc dài 3-50 ký tự và khớp `^[a-zA-Z0-9_.-]+$`, giống username.
 - Normalize bằng `strip().lower()` trước khi validate/persist.
-- `path` không có dấu `/` đầu và segment đầu tiên phải bằng chính xác `prefix`.
-- Ví dụ `prefix="power_bi"` chỉ hợp lệ với `path="power_bi/customer_report"`
-  hoặc `path="power_bi"`.
+- `path` là relative path bắt buộc, không chứa `prefix`, không có dấu `/` đầu
+  hoặc cuối và không có segment rỗng.
+- Ví dụ `prefix="power_bi"` và `path="customer_report"` sinh execution URL
+  `/api/v1/power_bi/customer_report`.
 - Prefix gần giống như `power_bi_extra` không khớp `power_bi`.
-- Create/update bị từ chối nếu prefix và path không nhất quán.
+- Prefix `dynamic-routes` được reserve cho management API và không được đăng ký
+  làm execution prefix.
 
 ### 7. Repository, transaction và service lifecycle
 
@@ -315,7 +319,12 @@ Repository contract:
 
 ```python
 class DynamicRouteRepository(Protocol):
-    async def get_by_path(self, path: str) -> DynamicRoute | None: ...
+    async def get_by_id(self, route_id: UUID) -> DynamicRoute | None: ...
+    async def get_by_route(
+        self,
+        prefix: str,
+        path: str,
+    ) -> DynamicRoute | None: ...
     async def list_all(self) -> list[DynamicRoute]: ...
     async def create(self, route: DynamicRoute) -> DynamicRoute: ...
     async def update(self, route: DynamicRoute) -> DynamicRoute: ...
@@ -335,10 +344,11 @@ authorize admin
 
 Để không còn overwrite ngầm:
 
-- `POST /api/v1/dynamic-routes` chỉ tạo path mới; path trùng trả `409`.
-- `PUT /api/v1/dynamic-routes/{path}` thay thế toàn bộ config hiện hành và
+- `POST /api/v1/dynamic-routes` chỉ tạo cặp `(prefix, path)` mới; trùng cặp trả
+  `409`.
+- `PUT /api/v1/dynamic-routes/{route_id:uuid}` thay thế toàn bộ config hiện hành và
   cập nhật `updated_by`.
-- `DELETE /api/v1/dynamic-routes/{path}` hard delete trong transaction.
+- `DELETE /api/v1/dynamic-routes/{route_id:uuid}` hard delete trong transaction.
 
 Nếu lab test thất bại, transaction persistence không được commit. Kết quả lab
 test chỉ trả về trong response của request và không được lưu vào row.
@@ -346,8 +356,9 @@ test chỉ trả về trong response của request và không được lưu vào
 Execute flow:
 
 ```text
-repository.get_by_path(path)
-  -> authorize bằng persisted prefix
+HTTP GET /api/v1/{prefix}/{path}
+  -> require_api_permission() authorize từ URL prefix
+  -> repository.get_by_route(prefix, path)
   -> map DB row thành route config
   -> revalidate canonical_sql + parameter contract
   -> cast query params
@@ -453,29 +464,47 @@ Các endpoint quản lý phải admin-only:
 
 - `POST /api/v1/dynamic-routes`
 - `GET /api/v1/dynamic-routes`
-- `PUT /api/v1/dynamic-routes/{path}`
-- `DELETE /api/v1/dynamic-routes/{path}`
+- `GET /api/v1/dynamic-routes/{route_id:uuid}`
+- `PUT /api/v1/dynamic-routes/{route_id:uuid}`
+- `DELETE /api/v1/dynamic-routes/{route_id:uuid}`
 
 Endpoint execute áp dụng cùng rule authorization hiện tại:
 
-- `GET /api/v1/dynamic-routes/{path}`
+- `GET /api/v1/{prefix}/{path:path}`
 
-Authorization của execution dùng `prefix` đã persistence:
+Execution URL được tạo bằng:
+
+```text
+api_v1_prefix + "/" + route.prefix + "/" + route.path
+```
+
+Ví dụ:
+
+```text
+prefix = power_bi
+path = customer_report
+URL = /api/v1/power_bi/customer_report
+```
+
+Authorization của execution:
 
 - Admin được execute mọi Dynamic Route.
-- User thường chỉ được execute khi `route.prefix == current_user.username`.
-- So sánh sau khi cả hai giá trị đã normalize lowercase.
+- User thường chỉ được execute khi URL prefix khớp `current_user.username`.
 - So sánh exact; `power_bi` không được phép gọi route có prefix
   `power_bi_extra`.
-- Route phải được load từ database để lấy prefix trước khi authorize, nhưng SQL
-  tuyệt đối chưa được validate/execute trước khi authorization thành công.
+- `require_api_permission()` nhìn segment đầu của normalized URL là `prefix`,
+  nên authorization chạy trước database lookup và trước mọi SQL validation hoặc
+  execution.
 - Mọi allow/deny tiếp tục được ghi audit theo flow API permission hiện tại.
 
-Dependency `require_api_permission` đang nhìn first segment của URL thật là
-`dynamic-routes`, nên không thể áp nguyên trạng cho execute endpoint. Sprint phải
-tách management authorization khỏi execution authorization và tái sử dụng
-`check_api_permission()` với effective route path `/{prefix}` hoặc một helper
-exact-prefix tương đương.
+Management API không có business prefix và luôn dùng `/dynamic-routes`, nên
+management endpoints bắt buộc dùng role `admin`; user có username
+`dynamic-routes` cũng không được phép quản lý route.
+
+Route execute catch-all `/{prefix}/{path:path}` phải được include sau toàn bộ
+static router và management router. Khi effective path trùng chính xác một static
+GET route, registration phải bị từ chối để tránh route shadowing; static route
+không được âm thầm thắng hoặc thua tùy thứ tự include.
 
 Project hiện chỉ có role `admin` và `user`, vì vậy management dùng role `admin`.
 Thiết kế role `data_engineer` riêng nằm ngoài phạm vi.
@@ -502,8 +531,8 @@ Luồng runtime:
 
 ```text
 client request
-  -> database lookup by path
-  -> authorize bằng persisted prefix
+  -> require_api_permission() từ URL prefix
+  -> database lookup by (prefix, path)
   -> revalidate canonical SQL
   -> validate/cast query parameters
   -> execute canonical SQL + bound values
@@ -592,7 +621,9 @@ Kết quả mong muốn:
 - Bỏ `path_params`.
 - Bỏ `pii_columns` khỏi create/update/response schema.
 - Thêm `prefix` với validation giống username và normalize lowercase.
-- Validate segment đầu tiên của `path` bằng chính xác `prefix`.
+- `path` là relative path không chứa prefix; validate không có slash đầu/cuối,
+  segment rỗng, `.` hoặc `..`.
+- Expose computed `api_path = "/{prefix}/{path}"` trong management response.
 - Thêm `params: dict[str, DynamicParameterDefinition]`.
 - Hỗ trợ các type đã chốt và validate `required/default`.
 - Chỉ hỗ trợ placeholder `:name`.
@@ -630,7 +661,8 @@ Kết quả mong muốn:
 - Create/replace route validate SQL và parameter contract trước lab
   test/persistence.
 - Service không còn phụ thuộc `DynamicRouteRegistry`.
-- Service đọc route bằng repository theo `path`.
+- Service đọc route bằng repository theo cặp `(prefix, path)`.
+- Reject effective API path trùng một static GET route.
 - Lab test và runtime dùng canonical SQL cùng bound parameters.
 - Runtime validate lại canonical SQL.
 - Xóa `_resolve_sql()` và mọi string replacement.
@@ -652,14 +684,14 @@ Files:
 
 Kết quả mong muốn:
 
-- Tạo bảng `dynamic_routes` với đúng schema và unique constraint trên `path`.
+- Tạo bảng `dynamic_routes` với đúng schema và unique constraint trên
+  `(prefix, path)`.
 - Lưu `prefix`, `original_sql`, `canonical_sql`, typed parameter definitions,
   ownership và timestamps.
-- Có database check constraint bảo đảm prefix lowercase và khớp segment đầu của
-  path.
+- Có database check constraint bảo đảm prefix lowercase và path là relative.
 - Không có column `pii_columns`.
 - Không có `lab_test_result`, version, status hoặc soft-delete column.
-- `POST` tạo mới và trả `409` khi path đã tồn tại.
+- `POST` tạo mới và trả `409` khi `(prefix, path)` đã tồn tại.
 - `PUT` thay thế toàn bộ config hiện hành trong cùng row.
 - `DELETE` hard delete trong transaction.
 - Repository query là source of truth; không preload vào process registry.
@@ -677,9 +709,14 @@ Files:
 Kết quả mong muốn:
 
 - Create/list/update/delete chỉ cho role `admin`.
-- Execute dùng persisted prefix để áp dụng admin-all/user-matches-username.
+- Execute chuyển sang `GET /api/v1/{prefix}/{path:path}`.
+- Execute dùng `require_api_permission()` trực tiếp trên URL để áp dụng
+  admin-all/user-matches-username trước database lookup.
 - User `power_bi` gọi được prefix `power_bi` nhưng không gọi được
   `power_bi_extra`.
+- User có username `dynamic-routes` vẫn không được gọi management API.
+- Catch-all execution router được include cuối và registration reject static
+  route collision.
 - Request bị từ chối trước khi parse hoặc execute SQL.
 - Có test user thường không thể xem original/canonical SQL.
 
@@ -722,10 +759,13 @@ Nhóm parameter injection:
 - Semicolon và statement fragment.
 - Unicode string.
 - Empty, missing, extra và invalid typed value.
-- Duplicate path, update một row, hard delete và read-after-restart.
+- Duplicate `(prefix, path)`, cùng path ở hai prefix khác nhau, update một row,
+  hard delete và read-after-restart.
 - Không có `lab_test_result` trong response persistence hoặc database row.
-- Prefix đúng/sai segment đầu của path.
+- Validate prefix, relative path và computed API path.
 - Admin execute mọi prefix; user thường chỉ execute exact username prefix.
+- Authorization xảy ra trước repository lookup; management vẫn admin-only.
+- Static route collision bị từ chối và catch-all không shadow static route.
 - Dynamic API không gọi PII mapper và luôn trả `missing_mappings=[]`.
 
 ### Task 8 - Cập nhật tài liệu vận hành
@@ -742,6 +782,8 @@ Kết quả mong muốn:
 
 - Mô tả PostgreSQL là source of truth thay cho in-memory registry.
 - Mô tả create/PUT update/hard-delete lifecycle.
+- Mô tả management URL `/api/v1/dynamic-routes` và execution URL
+  `/api/v1/{prefix}/{path}` là hai contract riêng.
 - Mô tả prefix authorization và exact username match.
 - Ghi rõ Dynamic API tạm thời không hỗ trợ PII mapping.
 - Mô tả contract `:param` và typed parameter definitions.
@@ -757,7 +799,7 @@ Kết quả mong muốn:
 
 ```json
 {
-  "path": "power_bi/customer-sales",
+  "path": "customer-sales",
   "prefix": "power_bi",
   "description": "Sales grouped by customer",
   "sql": "WITH filtered AS (SELECT customer_id, amount FROM hive.analytics.sales WHERE region = :region AND sale_date >= :start_date) SELECT customer_id, sum(amount) AS total_amount FROM filtered GROUP BY customer_id",
@@ -783,7 +825,7 @@ Kết quả mong muốn:
 ### Execute route
 
 ```http
-GET /api/v1/dynamic-routes/power_bi/customer-sales?region=APAC&start_date=2026-07-01
+GET /api/v1/power_bi/customer-sales?region=APAC&start_date=2026-07-01
 Authorization: Bearer <access_token>
 ```
 
@@ -813,15 +855,20 @@ canonical SQL và không thể tạo thêm AST node hoặc thay đổi điều k
 8. Lab test và runtime dùng cùng validator, canonicalizer và binder.
 9. PostgreSQL là source of truth; không có Dynamic Route state bắt buộc trong
    process memory.
-10. `path` unique; create trùng path trả `409`, update ghi đè một row và delete
-    là hard delete.
-11. `prefix` tồn tại trong database, khớp segment đầu của path và được index.
-12. Admin execute mọi prefix; user thường chỉ execute prefix khớp exact username.
+10. `(prefix, path)` unique; create trùng cặp trả `409`, update ghi đè một row
+    và delete là hard delete.
+11. `prefix` và relative `path` tồn tại riêng trong database; execution URL bằng
+    `/api/v1/{prefix}/{path}`.
+12. Admin execute mọi prefix; user thường chỉ execute prefix khớp exact username
+    qua `require_api_permission()` trước database lookup.
 13. `pii_columns` và `lab_test_result` không tồn tại trong database schema.
 14. Dynamic API không inject/call PII mapper và trả `missing_mappings=[]`.
 15. Create/list/update/delete Dynamic Route chỉ cho admin.
-16. Trino credential triển khai production được xác nhận read-only.
-17. `pytest`, `ruff check .` và `mypy app` đều pass.
+16. Management API dùng `/api/v1/dynamic-routes`; execution API không chứa
+    segment `dynamic-routes`.
+17. Static routes không bị dynamic catch-all shadow.
+18. Trino credential triển khai production được xác nhận read-only.
+19. `pytest`, `ruff check .` và `mypy app` đều pass.
 
 ## Ngoài phạm vi sprint
 
