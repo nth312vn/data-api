@@ -1,7 +1,9 @@
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 
 from app.core.config import Settings
 from app.core.exceptions import ExternalServiceTimeoutError
@@ -33,9 +35,11 @@ class FakeConnection:
         *,
         responses: dict[str, tuple[list[str], list[tuple[Any, ...]]]],
         executed_sql: list[str],
+        executed_parameters: list[Mapping[str, object]],
     ) -> None:
         self._responses = responses
         self._executed_sql = executed_sql
+        self._executed_parameters = executed_parameters
         self.closed = False
 
     def __enter__(self) -> "FakeConnection":
@@ -44,9 +48,14 @@ class FakeConnection:
     def __exit__(self, *_args: object) -> None:
         self.closed = True
 
-    def execute(self, statement: Any) -> FakeResult:
+    def execute(
+        self,
+        statement: Any,
+        parameters: Mapping[str, object] | None = None,
+    ) -> FakeResult:
         sql = str(statement)
         self._executed_sql.append(sql)
+        self._executed_parameters.append(parameters or {})
         columns, rows = self._responses[sql]
         return FakeResult(columns, rows)
 
@@ -58,6 +67,7 @@ class FakeEngine:
     ) -> None:
         self.responses = responses
         self.executed_sql: list[str] = []
+        self.executed_parameters: list[Mapping[str, object]] = []
         self.connections: list[FakeConnection] = []
         self.disposed = False
 
@@ -65,6 +75,7 @@ class FakeEngine:
         connection = FakeConnection(
             responses=self.responses,
             executed_sql=self.executed_sql,
+            executed_parameters=self.executed_parameters,
         )
         self.connections.append(connection)
         return connection
@@ -155,7 +166,11 @@ async def test_trino_client_reuses_engine_between_queries() -> None:
 @pytest.mark.asyncio
 async def test_trino_client_recreates_engine_after_query_failure() -> None:
     class FailingConnection(FakeConnection):
-        def execute(self, statement: Any) -> FakeResult:
+        def execute(
+            self,
+            statement: Any,
+            parameters: Mapping[str, object] | None = None,
+        ) -> FakeResult:
             raise RuntimeError("query failed")
 
     class FailingEngine(FakeEngine):
@@ -163,6 +178,7 @@ async def test_trino_client_recreates_engine_after_query_failure() -> None:
             connection = FailingConnection(
                 responses=self.responses,
                 executed_sql=self.executed_sql,
+                executed_parameters=self.executed_parameters,
             )
             self.connections.append(connection)
             return connection
@@ -199,15 +215,20 @@ async def test_trino_client_recreates_engine_after_query_failure() -> None:
 @pytest.mark.asyncio
 async def test_trino_client_disposes_engine_after_query_timeout() -> None:
     class SlowConnection(FakeConnection):
-        def execute(self, statement: Any) -> FakeResult:
+        def execute(
+            self,
+            statement: Any,
+            parameters: Mapping[str, object] | None = None,
+        ) -> FakeResult:
             time.sleep(0.05)
-            return super().execute(statement)
+            return super().execute(statement, parameters)
 
     class SlowEngine(FakeEngine):
         def connect(self) -> FakeConnection:
             connection = SlowConnection(
                 responses=self.responses,
                 executed_sql=self.executed_sql,
+                executed_parameters=self.executed_parameters,
             )
             self.connections.append(connection)
             return connection
@@ -297,3 +318,24 @@ async def test_trino_client_reads_catalog_schema_table_and_column_metadata() -> 
         'SHOW TABLES FROM "hive"."default"',
         'SHOW COLUMNS FROM "hive"."default"."users"',
     ]
+
+
+@pytest.mark.asyncio
+async def test_trino_client_passes_injection_payload_as_bound_parameter() -> None:
+    payload = "APAC' OR 1=1 --"
+    sql = "SELECT * FROM sales WHERE region = :region"
+    engine = FakeEngine({sql: (["region"], [("APAC",)])})
+
+    def engine_factory(*_args: Any, **_kwargs: Any) -> FakeEngine:
+        return engine
+
+    client = TrinoPythonClient(
+        settings=make_settings(),
+        engine_factory=engine_factory,
+    )
+
+    await client.execute(text(sql), {"region": payload})
+
+    assert engine.executed_sql == [sql]
+    assert payload not in engine.executed_sql[0]
+    assert engine.executed_parameters == [{"region": payload}]
