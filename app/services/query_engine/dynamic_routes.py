@@ -143,11 +143,12 @@ class DynamicRouteService:
             await self.uow.rollback()
             raise
 
-    async def delete_route(self, route_id: UUID) -> None:
+    async def delete_route(self, route_id: UUID) -> DynamicRoute:
         route = await self.get_route(route_id)
         try:
             await self.routes.delete(route)
             await self.uow.commit()
+            return route
         except Exception:
             await self.uow.rollback()
             raise

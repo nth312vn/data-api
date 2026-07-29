@@ -464,3 +464,20 @@ Nhờ đó:
 - Payload như `' OR 1=1 --` không thể thay đổi cấu trúc query.
 - SQL có ký tự điều khiển hoặc parser fallback bị từ chối theo nguyên tắc
   fail-closed.
+
+# Sprint 5 implementation status
+
+The design in this presentation is now implemented on the Sprint 5 branch.
+Dynamic Routes are PostgreSQL-backed and execute through
+`/api/v1/{prefix}/{path:path}` after exact prefix authorization. Management
+operations remain admin-only under `/api/v1/dynamic-routes`.
+
+The current implementation stores `original_sql` for admin review, but sends
+only validated canonical SQL to Trino. It rejects non-SELECT statements,
+multi-statement payloads and unsafe Unicode control/format characters, then
+binds typed parameter values separately. Dynamic API PII mapping is disabled;
+responses always contain `missing_mappings: []`, and `lab_test_result` is not
+persisted or exposed.
+
+For the end-to-end flow and injection examples, see
+[docs/dynamic-api.md](docs/dynamic-api.md).

@@ -61,3 +61,31 @@ Quyền của User được quy định ở cột `role` trong bảng `users` (`
 
 7. **Trả kết quả:**
    Trả về JSON kết quả cuối cùng với các trường PII đã map thành giá trị thật khi có mapping, hoặc `null` khi không map được.
+
+---
+
+## 3. Dynamic API: prefix authorization và SQL safety
+
+1. Admin gửi `POST /api/v1/dynamic-routes` với `prefix`, relative `path`,
+   SQL dùng placeholder `:name`, typed `params` và tùy chọn `lab_test`.
+2. API validate prefix/path và dùng SQLGlot với dialect Trino. Chỉ một
+   `SELECT` hoặc `WITH ... SELECT` được phép; DML, DDL, command, multi-statement
+   và control/format characters bị từ chối trước khi gọi Trino.
+3. AST được render thành canonical SQL, parse/validate lại, đối chiếu chính xác
+   với parameter definitions rồi lưu vào PostgreSQL `dynamic_routes`.
+4. Runtime request tới `GET /api/v1/{prefix}/{path:path}` chạy
+   `require_api_permission()` trước repository lookup. User thường chỉ được
+   dùng prefix trùng chính xác username.
+5. Service đọc canonical SQL từ database, revalidate, cast query values theo
+   type và gửi statement cùng mapping bind riêng tới Trino. Payload
+   `APAC' OR 1=1 --` vẫn là một string value.
+6. Response Dynamic API không gọi PII mapper và luôn trả
+   `missing_mappings: []`. Audit chỉ lưu metadata route an toàn, không lưu SQL
+   hoặc bound values.
+
+Management và runtime là hai nhóm route độc lập:
+
+```text
+Management: /api/v1/dynamic-routes
+Runtime:    /api/v1/{prefix}/{path:path}
+```

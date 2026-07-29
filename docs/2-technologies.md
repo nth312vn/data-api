@@ -37,3 +37,16 @@ Dự án sử dụng một tập hợp các công nghệ hiện đại, mạnh m
 - **Black:** Formatter tiêu chuẩn giúp định dạng code thống nhất.
 - **Mypy:** Công cụ phân tích và kiểm tra kiểu dữ liệu tĩnh (Static type checker). Ngăn chặn lỗi runtime liên quan đến sai kiểu dữ liệu.
 - **Pytest & Pytest-asyncio:** Framework viết unit test và integration test. Hỗ trợ test các hàm `async`.
+
+## 7. Dynamic API safety
+
+- **SQLGlot:** Parse SQL theo dialect Trino, bắt buộc một `SELECT` root và
+  duyệt AST để chặn DML, DDL, command, privilege/session và transaction.
+- **SQLAlchemy bind parameters:** Typed values được truyền riêng qua
+  `bindparam`; Dynamic API không interpolation SQL và không ghi bound values
+  vào audit.
+- **PostgreSQL JSONB + Alembic:** Lưu canonical SQL và parameter definitions
+  trong bảng `dynamic_routes`; database là source of truth thay cho in-memory
+  registry.
+- **Trino read-only credential:** Application validator là lớp guard đầu tiên,
+  role chỉ đọc ở Trino là lớp guard cuối cùng.

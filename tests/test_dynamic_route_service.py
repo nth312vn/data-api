@@ -73,9 +73,7 @@ class RecordingUnitOfWork:
 class RecordingTrino:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
-        self.executions: list[
-            tuple[str, Mapping[str, object] | None]
-        ] = []
+        self.executions: list[tuple[str, Mapping[str, object] | None]] = []
 
     async def execute(
         self,
@@ -126,10 +124,7 @@ def make_payload(
         prefix=prefix,
         path=path,
         description="Customer sales",
-        sql=(
-            "SELECT customer_id FROM sales "
-            "WHERE region = :region /* remove me */"
-        ),
+        sql=("SELECT customer_id FROM sales " "WHERE region = :region /* remove me */"),
         params={"region": {"type": "string"}},
         lab_test=lab_test,
         lab_test_params={"region": "APAC"} if lab_test else {},

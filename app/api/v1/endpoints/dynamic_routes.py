@@ -5,7 +5,10 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ConflictError
 from app.dependencies.auth import require_roles
-from app.dependencies.services import get_dynamic_route_service
+from app.dependencies.services import (
+    get_audit_log_service,
+    get_dynamic_route_service,
+)
 from app.models.dynamic_route import DynamicRoute
 from app.models.user import User, UserRole
 from app.schemas.dynamic_route import (
@@ -13,10 +16,12 @@ from app.schemas.dynamic_route import (
     DynamicRouteResponse,
     DynamicRouteWriteRequest,
 )
+from app.services.audit_log import AuditLogService
 from app.services.query_engine.dynamic_parameters import (
     DynamicParameterDefinition,
 )
 from app.services.query_engine.dynamic_routes import DynamicRouteService
+from app.services.query_engine.sql_safety import DynamicSqlError
 
 router = APIRouter()
 
@@ -31,6 +36,7 @@ async def create_dynamic_route(
     request: Request,
     admin: User = Depends(require_roles(UserRole.admin)),
     service: DynamicRouteService = Depends(get_dynamic_route_service),
+    audit_logs: AuditLogService = Depends(get_audit_log_service),
     settings: Settings = Depends(get_settings),
 ) -> DynamicRouteResponse:
     _reject_static_get_collision(
@@ -39,7 +45,27 @@ async def create_dynamic_route(
         prefix=payload.prefix,
         path=payload.path,
     )
-    route = await service.create_route(payload=payload, actor=admin)
+    try:
+        route = await service.create_route(payload=payload, actor=admin)
+    except DynamicSqlError as exc:
+        await audit_logs.audit_dynamic_route_action(
+            actor=admin,
+            action="create",
+            route_id=None,
+            prefix=payload.prefix,
+            path=payload.path,
+            allowed=False,
+            error_code=exc.code,
+        )
+        raise
+    await audit_logs.audit_dynamic_route_action(
+        actor=admin,
+        action="create",
+        route_id=route.id,
+        prefix=route.prefix,
+        path=route.path,
+        allowed=True,
+    )
     return _route_to_response(route)
 
 
@@ -71,6 +97,7 @@ async def update_dynamic_route(
     request: Request,
     admin: User = Depends(require_roles(UserRole.admin)),
     service: DynamicRouteService = Depends(get_dynamic_route_service),
+    audit_logs: AuditLogService = Depends(get_audit_log_service),
     settings: Settings = Depends(get_settings),
 ) -> DynamicRouteResponse:
     _reject_static_get_collision(
@@ -79,10 +106,30 @@ async def update_dynamic_route(
         prefix=payload.prefix,
         path=payload.path,
     )
-    route = await service.update_route(
-        route_id=route_id,
-        payload=payload,
+    try:
+        route = await service.update_route(
+            route_id=route_id,
+            payload=payload,
+            actor=admin,
+        )
+    except DynamicSqlError as exc:
+        await audit_logs.audit_dynamic_route_action(
+            actor=admin,
+            action="update",
+            route_id=route_id,
+            prefix=payload.prefix,
+            path=payload.path,
+            allowed=False,
+            error_code=exc.code,
+        )
+        raise
+    await audit_logs.audit_dynamic_route_action(
         actor=admin,
+        action="update",
+        route_id=route.id,
+        prefix=route.prefix,
+        path=route.path,
+        allowed=True,
     )
     return _route_to_response(route)
 
@@ -92,8 +139,17 @@ async def delete_dynamic_route(
     route_id: UUID,
     _admin: User = Depends(require_roles(UserRole.admin)),
     service: DynamicRouteService = Depends(get_dynamic_route_service),
+    audit_logs: AuditLogService = Depends(get_audit_log_service),
 ) -> Response:
-    await service.delete_route(route_id)
+    route = await service.delete_route(route_id)
+    await audit_logs.audit_dynamic_route_action(
+        actor=_admin,
+        action="delete",
+        route_id=route.id,
+        prefix=route.prefix,
+        path=route.path,
+        allowed=True,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -136,6 +136,12 @@ async def _write_api_permission_audit_log(
 
 
 def _request_parameters(request: Request) -> dict[str, Any]:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", "")
+    if route_path.endswith("/{prefix}/{path:path}"):
+        return {
+            "parameter_names": sorted(set(request.query_params.keys())),
+        }
     return dict(request.query_params)
 
 

@@ -13,6 +13,7 @@ from app.dependencies.repositories import get_audit_log_repository
 from app.dependencies.services import get_dynamic_route_service
 from app.models.dynamic_route import DynamicRoute
 from app.models.user import User, UserRole
+from app.services.query_engine.sql_safety import DynamicSqlError
 
 
 class FakeAuditRepository:
@@ -36,13 +37,16 @@ class FakeUnitOfWork:
 
 
 class RecordingDynamicRouteService:
-    def __init__(self) -> None:
+    def __init__(self, create_error: Exception | None = None) -> None:
         self.route = make_route()
+        self.create_error = create_error
         self.created = 0
         self.executions: list[tuple[str, str, Any]] = []
 
     async def create_route(self, *, payload: Any, actor: User) -> DynamicRoute:
         self.created += 1
+        if self.create_error is not None:
+            raise self.create_error
         self.route.prefix = payload.prefix
         self.route.path = payload.path
         return self.route
@@ -65,8 +69,9 @@ class RecordingDynamicRouteService:
         self.route.path = payload.path
         return self.route
 
-    async def delete_route(self, route_id: UUID) -> None:
+    async def delete_route(self, route_id: UUID) -> DynamicRoute:
         assert route_id == self.route.id
+        return self.route
 
     async def execute_route(
         self,
@@ -134,6 +139,7 @@ def make_app(
     app.dependency_overrides[get_dynamic_route_service] = get_service
     app.dependency_overrides[get_audit_log_repository] = lambda: audit_repository
     app.dependency_overrides[get_unit_of_work] = lambda: uow
+    app.state.audit_repository = audit_repository
     return app
 
 
@@ -192,6 +198,18 @@ def test_admin_can_manage_routes_by_uuid_without_pii_fields() -> None:
     assert created.json()["api_path"] == "/power_bi/customer-sales"
     assert "pii_columns" not in created.json()
     assert "lab_test_result" not in created.json()
+    management_entries = [
+        entry
+        for entry in app.state.audit_repository.entries
+        if entry.api_route.startswith("dynamic-route:")
+    ]
+    assert management_entries[0].parameters == {
+        "action": "create",
+        "route_id": str(service.route.id),
+        "prefix": "power_bi",
+        "path": "customer-sales",
+    }
+    assert "SELECT" not in repr(management_entries)
 
 
 def test_registration_rejects_exact_static_get_collision() -> None:
@@ -211,6 +229,36 @@ def test_registration_rejects_exact_static_get_collision() -> None:
     assert service.created == 0
 
 
+def test_rejected_sql_policy_is_audited_without_sql_or_values() -> None:
+    service = RecordingDynamicRouteService(
+        create_error=DynamicSqlError(
+            "dynamic_sql_statement_not_allowed",
+            "Only SELECT queries are allowed",
+        ),
+    )
+    app = make_app(
+        user=make_user("admin", UserRole.admin),
+        service=service,
+    )
+
+    response = TestClient(app).post(
+        "/api/v1/dynamic-routes",
+        json=route_payload(),
+    )
+
+    assert response.status_code == 422
+    entry = app.state.audit_repository.entries[0]
+    assert entry.allowed is False
+    assert entry.parameters == {
+        "action": "create",
+        "route_id": None,
+        "prefix": "power_bi",
+        "path": "customer-sales",
+        "error_code": "dynamic_sql_statement_not_allowed",
+    }
+    assert "SELECT" not in repr(entry.parameters)
+
+
 def test_matching_prefix_user_executes_dynamic_route_without_pii_mapping() -> None:
     service = RecordingDynamicRouteService()
     app = make_app(
@@ -218,9 +266,10 @@ def test_matching_prefix_user_executes_dynamic_route_without_pii_mapping() -> No
         service=service,
     )
 
+    injection_payload = "APAC' OR 1=1 --"
     response = TestClient(app).get(
         "/api/v1/power_bi/customer-sales",
-        params={"region": "APAC"},
+        params={"region": injection_payload},
     )
 
     assert response.status_code == 200
@@ -229,6 +278,9 @@ def test_matching_prefix_user_executes_dynamic_route_without_pii_mapping() -> No
         "missing_mappings": [],
     }
     assert service.executions[0][0:2] == ("power_bi", "customer-sales")
+    permission_entry = app.state.audit_repository.entries[0]
+    assert permission_entry.parameters == {"parameter_names": ["region"]}
+    assert injection_payload not in repr(permission_entry.parameters)
 
 
 def test_authorization_denial_happens_before_service_repository_dependency() -> None:
