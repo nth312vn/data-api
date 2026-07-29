@@ -11,15 +11,17 @@ Sprint này làm cứng luồng định nghĩa và thực thi SQL của Dynamic 
 
 1. Chỉ admin/data engineer nội bộ được phép đăng ký, xem cấu hình và xóa
    Dynamic Route.
-2. Chỉ chấp nhận đúng một câu truy vấn read-only có dạng `SELECT` hoặc
+2. Lưu Dynamic Route bền vững trong application PostgreSQL, với một bản ghi
+   hiện hành duy nhất cho mỗi `path`.
+3. Chỉ chấp nhận đúng một câu truy vấn read-only có dạng `SELECT` hoặc
    `WITH ... SELECT`.
-3. Chặn DDL, DML, command, multi-statement và các biến thể cố tình che giấu
+4. Chặn DDL, DML, command, multi-statement và các biến thể cố tình che giấu
    bằng comment, whitespace hoặc ký tự điều khiển.
-4. Bỏ cơ chế thay chuỗi `{param}` và chuyển sang typed parameter binding với
+5. Bỏ cơ chế thay chuỗi `{param}` và chuyển sang typed parameter binding với
    placeholder `:param`.
-5. Parse SQL thành AST theo dialect Trino, validate fail-closed và chỉ thực thi
+6. Parse SQL thành AST theo dialect Trino, validate fail-closed và chỉ thực thi
    canonical SQL sinh lại từ AST.
-6. Dùng cùng một validation/execution pipeline cho lab test và request thật.
+7. Dùng cùng một validation/execution pipeline cho lab test và request thật.
 
 ## Threat model và quyết định đã chốt
 
@@ -53,27 +55,51 @@ mà Trino credential có quyền truy cập. Vì vậy Trino credential dùng b�
 phải được cấu hình read-only ở Trino. Application validator không thay thế cơ
 chế phân quyền của Trino.
 
-### Breaking change được chấp nhận
+### Persistence và lifecycle
 
 Contract `{param}` và `path_params: list[str]` hiện tại bị loại bỏ. Dynamic Route
 mới dùng placeholder `:param` và một object `params` khai báo kiểu dữ liệu.
 
-Dynamic Route hiện chỉ nằm trong memory nên không cần database migration. Sau
-khi restart/deploy, route phải được đăng ký lại theo contract mới.
+Dynamic Route được lưu trong application PostgreSQL, không còn phụ thuộc vào
+process memory. Có đúng một bản ghi hiện hành cho mỗi `path`:
+
+- Create với `path` mới: insert bản ghi.
+- Update: ghi đè SQL/config hiện tại trong cùng bản ghi, cập nhật `updated_at`
+  và `updated_by`.
+- Create trùng `path`: trả conflict, không âm thầm ghi đè.
+- Delete: hard delete bản ghi.
+- Không có versioning, draft, active/disabled hoặc rollback trong sprint này.
+- `lab_test_result` không được lưu trong database; chỉ là kết quả tạm thời của
+  request bật `lab_test`.
+
+Sau restart/deploy hoặc khi chạy nhiều worker, mọi process đều đọc cùng một
+nguồn PostgreSQL.
 
 ## Phân tích codebase hiện tại
 
 ### 1. SQL được nhận và lưu mà không parse
 
 `CreateDynamicRouteRequest.sql` nhận chuỗi tự do. `DynamicRouteService` tạo
-config và đăng ký thẳng vào `DynamicRouteRegistry`. Nếu không bật lab test,
-syntax và loại statement không được kiểm tra trước khi route sẵn sàng phục vụ.
+config và đăng ký thẳng vào `DynamicRouteRegistry` in-memory. Nếu không bật lab
+test, syntax và loại statement không được kiểm tra trước khi route sẵn sàng phục
+vụ.
 
 Hệ quả:
 
 - `UPDATE`, `DELETE`, `DROP`, `CALL` hoặc nhiều statement có thể được lưu.
 - SQL lỗi chỉ xuất hiện khi client gọi route.
 - Không có canonical representation để biết chính xác statement nào sẽ chạy.
+
+### Persistence gap của Dynamic Route
+
+Registry hiện là dictionary trong process:
+
+- Restart làm mất toàn bộ route.
+- Nhiều worker có state khác nhau.
+- Không có `created_by`, `updated_by`, timestamp hoặc unique constraint trong
+  database.
+- `DELETE` chỉ xóa khỏi memory và không để lại storage record.
+- `lab_test_result` bị gắn vào object config và không có lifecycle rõ ràng.
 
 ### 2. Parameter hiện được chèn bằng string replacement
 
@@ -203,19 +229,110 @@ từ chối rõ ràng thay vì âm thầm biến đổi.
 Sau AST validation, hệ thống render lại query bằng Trino generator. Runtime chỉ
 execute `canonical_sql`; tuyệt đối không execute `original_sql`.
 
-Registry lưu:
+Database record lưu:
 
 - `original_sql`: chỉ phục vụ admin review qua management API, không được
   execute hoặc ghi vào log/audit.
 - `canonical_sql`: nguồn duy nhất cho lab test và runtime.
-- `parameter_definitions`: contract typed parameters.
-- Metadata route và PII config hiện có.
+- `parameter_definitions`: contract typed parameters dưới dạng JSONB.
+- `pii_columns`: danh sách cột PII dưới dạng JSONB.
+- Metadata route, ownership và timestamps.
+- Không có `lab_test_result`.
 
 Trước mỗi execution, canonical SQL được parse và validate lại. Việc validate lại
-bảo vệ khi config source thay đổi trong tương lai, ví dụ chuyển registry sang
-database hoặc import config từ file.
+bảo vệ khi dữ liệu trong database bị thay đổi ngoài service hoặc migration.
 
-### 6. Typed parameter contract
+### 6. Database-backed route storage
+
+Tạo bảng `dynamic_routes` trong application database. Đây là source of truth duy
+nhất cho Dynamic API.
+
+| Cột | Kiểu | Ràng buộc | Mục đích |
+|---|---|---|---|
+| `id` | UUID | PK | Định danh bản ghi |
+| `path` | VARCHAR(500) | NOT NULL, UNIQUE | Khóa route hiện hành |
+| `description` | TEXT | NOT NULL, default `''` | Mô tả route |
+| `original_sql` | TEXT | NOT NULL | SQL admin đã nhập, chỉ để review |
+| `canonical_sql` | TEXT | NOT NULL | SQL đã parse/validate, được execute |
+| `parameter_definitions` | JSONB | NOT NULL, default `{}` | Typed parameter contract |
+| `pii_columns` | JSONB | NOT NULL, default `[]` | Danh sách cột PII |
+| `created_by` | UUID | FK `users.id` `ON DELETE SET NULL`, nullable | Admin tạo route |
+| `updated_by` | UUID | FK `users.id` `ON DELETE SET NULL`, nullable | Admin cập nhật gần nhất |
+| `created_at` | TIMESTAMPTZ | NOT NULL | Kế thừa `BaseModelMixin` |
+| `updated_at` | TIMESTAMPTZ | NOT NULL | Kế thừa `BaseModelMixin` |
+
+Không tạo `version`, `status`, `deleted_at` hoặc `lab_test_result`. Hard delete
+được thực hiện bằng `DELETE FROM dynamic_routes`; audit event lưu độc lập trong
+`audit_logs` chỉ với route path, actor và action.
+
+Index tối thiểu:
+
+- Unique index trên `path`.
+- Index trên `created_by`.
+- Index trên `updated_at`.
+
+`parameter_definitions` phải được validate bằng Pydantic trước khi persistence;
+JSONB không được dùng làm lý do bỏ qua domain validation.
+
+### 7. Repository, transaction và service lifecycle
+
+Thêm các tầng:
+
+- `app/models/dynamic_route.py`: SQLAlchemy model `DynamicRoute`.
+- `app/repositories/interfaces/dynamic_route.py`: CRUD contract.
+- `app/repositories/sqlalchemy/dynamic_route.py`: PostgreSQL implementation.
+- `app/dependencies/repositories.py`: repository dependency.
+- `app/infrastructure/database/unit_of_work.py`: commit/rollback boundary.
+- Alembic migration tạo bảng và indexes.
+
+Repository contract:
+
+```python
+class DynamicRouteRepository(Protocol):
+    async def get_by_path(self, path: str) -> DynamicRoute | None: ...
+    async def list_all(self) -> list[DynamicRoute]: ...
+    async def create(self, route: DynamicRoute) -> DynamicRoute: ...
+    async def update(self, route: DynamicRoute) -> DynamicRoute: ...
+    async def delete(self, route: DynamicRoute) -> None: ...
+```
+
+Create/replace flow:
+
+```text
+authorize admin
+  -> validate request/schema
+  -> validate SQL AST + params
+  -> optional ephemeral lab test
+  -> insert/update database record
+  -> commit
+```
+
+Để không còn overwrite ngầm:
+
+- `POST /api/v1/dynamic-routes` chỉ tạo path mới; path trùng trả `409`.
+- `PUT /api/v1/dynamic-routes/{path}` thay thế toàn bộ config hiện hành và
+  cập nhật `updated_by`.
+- `DELETE /api/v1/dynamic-routes/{path}` hard delete trong transaction.
+
+Nếu lab test thất bại, transaction persistence không được commit. Kết quả lab
+test chỉ trả về trong response của request và không được lưu vào row.
+
+Execute flow:
+
+```text
+authorize client
+  -> repository.get_by_path(path)
+  -> map DB row thành route config
+  -> revalidate canonical_sql + parameter contract
+  -> cast query params
+  -> execute bound SQL
+  -> PII mapping + response
+```
+
+Không preload route vào memory registry. Nếu cần cache sau này, cache invalidation
+phải là một thiết kế riêng; cache không được trở thành source of truth.
+
+### 8. Typed parameter contract
 
 Thay:
 
@@ -276,7 +393,7 @@ driver/dialect đang dùng không vượt qua test này, `string_list` phải b�
 và được đưa ra khỏi scope implementation thay vì fallback sang string
 interpolation.
 
-### 7. Parameter binding ở Trino client
+### 9. Parameter binding ở Trino client
 
 Mở rộng contract của `TrinoClient` để statement và values đi riêng:
 
@@ -304,12 +421,13 @@ APAC' OR 1=1 --
 
 vẫn là một string value, không xuất hiện trong executable SQL text.
 
-### 8. Authorization
+### 10. Authorization
 
 Các endpoint quản lý phải admin-only:
 
 - `POST /api/v1/dynamic-routes`
 - `GET /api/v1/dynamic-routes`
+- `PUT /api/v1/dynamic-routes/{path}`
 - `DELETE /api/v1/dynamic-routes/{path}`
 
 Endpoint execute tiếp tục dùng API authorization hiện tại:
@@ -319,7 +437,7 @@ Endpoint execute tiếp tục dùng API authorization hiện tại:
 Project hiện chỉ có role `admin` và `user`, vì vậy sprint dùng role `admin`.
 Thiết kế role `data_engineer` riêng nằm ngoài phạm vi.
 
-### 9. Một pipeline cho create, lab test và execute
+### 11. Một pipeline cho create, lab test và execute
 
 Luồng đăng ký:
 
@@ -329,18 +447,20 @@ admin request
   -> SqlSafetyValidator
   -> ParameterContractValidator
   -> optional lab test bằng canonical SQL + bound values
-  -> register config
+  -> insert hoặc update database row
+  -> commit
 ```
 
-Nếu lab test được bật, route chỉ được register sau khi validation và query đều
-thành công. Lab test không có đường execute raw SQL riêng.
+Nếu lab test được bật, route chỉ được persistence sau khi validation và query đều
+thành công. Lab test không có đường execute raw SQL riêng và kết quả không được
+lưu vào database.
 
 Luồng runtime:
 
 ```text
 client request
   -> authorization
-  -> registry lookup
+  -> database lookup by path
   -> revalidate canonical SQL
   -> validate/cast query parameters
   -> execute canonical SQL + bound values
@@ -457,14 +577,42 @@ Files:
 
 Kết quả mong muốn:
 
-- Create route validate SQL và parameter contract trước lab test/register.
-- Registry lưu original SQL, canonical SQL và typed definitions.
+- Create/replace route validate SQL và parameter contract trước lab
+  test/persistence.
+- Service không còn phụ thuộc `DynamicRouteRegistry`.
+- Service đọc route bằng repository theo `path`.
 - Lab test và runtime dùng canonical SQL cùng bound parameters.
 - Runtime validate lại canonical SQL.
 - Xóa `_resolve_sql()` và mọi string replacement.
 - Existing PII mapping/response contract được giữ nguyên.
 
-### Task 5 - Siết quyền quản lý Dynamic Route
+### Task 5 - Lưu trữ Dynamic Route trong PostgreSQL
+
+Files:
+
+- `app/models/dynamic_route.py`
+- `app/repositories/interfaces/dynamic_route.py`
+- `app/repositories/sqlalchemy/dynamic_route.py`
+- `app/dependencies/repositories.py`
+- `app/infrastructure/database/unit_of_work.py` nếu cần transaction helper
+- `alembic/versions/<revision>_create_dynamic_routes.py`
+- `tests/test_dynamic_route_repository.py`
+- `tests/test_dynamic_route_persistence.py`
+
+Kết quả mong muốn:
+
+- Tạo bảng `dynamic_routes` với đúng schema và unique constraint trên `path`.
+- Lưu `original_sql`, `canonical_sql`, typed parameter definitions, PII columns,
+  ownership và timestamps.
+- Không có `lab_test_result`, version, status hoặc soft-delete column.
+- `POST` tạo mới và trả `409` khi path đã tồn tại.
+- `PUT` thay thế toàn bộ config hiện hành trong cùng row.
+- `DELETE` hard delete trong transaction.
+- Repository query là source of truth; không preload vào process registry.
+- Test chứng minh route vẫn tồn tại sau khi tạo service/worker instance mới.
+- Test rollback khi lab test hoặc persistence thất bại.
+
+### Task 6 - Siết quyền quản lý Dynamic Route
 
 Files:
 
@@ -474,18 +622,19 @@ Files:
 
 Kết quả mong muốn:
 
-- Create/list/delete chỉ cho role `admin`.
+- Create/list/update/delete chỉ cho role `admin`.
 - Execute giữ API permission flow hiện tại.
 - Request bị từ chối trước khi parse hoặc execute SQL.
 - Có test user thường không thể xem original/canonical SQL.
 
-### Task 6 - Bổ sung security test matrix
+### Task 7 - Bổ sung security và persistence test matrix
 
 Files:
 
 - `tests/test_sql_safety.py`
 - `tests/test_dynamic_routes_api.py`
 - `tests/test_trino_client.py`
+- `tests/test_dynamic_route_repository.py`
 
 Nhóm test hợp lệ:
 
@@ -517,18 +666,23 @@ Nhóm parameter injection:
 - Semicolon và statement fragment.
 - Unicode string.
 - Empty, missing, extra và invalid typed value.
+- Duplicate path, update một row, hard delete và read-after-restart.
+- Không có `lab_test_result` trong response persistence hoặc database row.
 
-### Task 7 - Cập nhật tài liệu vận hành
+### Task 8 - Cập nhật tài liệu vận hành
 
 Files:
 
 - `README.md`
 - `docs/2-technologies.md`
 - `docs/3-flows.md`
+- `docs/sprint/sprint-5.md`
 - Tài liệu Dynamic API mới nếu cần
 
 Kết quả mong muốn:
 
+- Mô tả PostgreSQL là source of truth thay cho in-memory registry.
+- Mô tả create/PUT update/hard-delete lifecycle.
 - Mô tả contract `:param` và typed parameter definitions.
 - Mô tả single `SELECT`/`WITH ... SELECT` policy.
 - Ghi rõ original SQL không bao giờ được execute.
@@ -593,18 +747,24 @@ canonical SQL và không thể tạo thêm AST node hoặc thay đổi điều k
 6. Query parameter được cast và truyền tách biệt khỏi SQL statement.
 7. Injection payload không xuất hiện trong executable SQL text.
 8. Lab test và runtime dùng cùng validator, canonicalizer và binder.
-9. Create/list/delete Dynamic Route chỉ cho admin.
-10. Trino credential triển khai production được xác nhận read-only.
-11. Existing PII mapping và `DataRowsResponse` không thay đổi ngoài các error
+9. PostgreSQL là source of truth; không có Dynamic Route state bắt buộc trong
+   process memory.
+10. `path` unique; create trùng path trả `409`, update ghi đè một row và delete
+    là hard delete.
+11. `lab_test_result` không tồn tại trong database schema.
+12. Create/list/update/delete Dynamic Route chỉ cho admin.
+13. Trino credential triển khai production được xác nhận read-only.
+14. Existing PII mapping và `DataRowsResponse` không thay đổi ngoài các error
     contract được nêu trong sprint.
-12. `pytest`, `ruff check .` và `mypy app` đều pass.
+15. `pytest`, `ruff check .` và `mypy app` đều pass.
 
 ## Ngoài phạm vi sprint
 
 - Allowlist/denylist catalog, schema, table hoặc column.
 - Phân tích quyền truy cập dữ liệu theo tenant ở SQL AST.
 - Tạo role `data_engineer` mới trong application.
-- Persist Dynamic Route vào database hoặc đồng bộ registry giữa nhiều worker.
+- Versioning, draft/publish, rollback hoặc soft delete Dynamic Route.
+- Cache Dynamic Route ngoài PostgreSQL source of truth.
 - Cho phép DDL/DML dù là admin.
 - Cho phép dynamic identifier, raw SQL fragment hoặc custom expression từ query
   parameter.
