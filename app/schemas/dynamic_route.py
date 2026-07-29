@@ -1,54 +1,101 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+)
+
+from app.services.query_engine.dynamic_parameters import (
+    DynamicParameterDefinition,
+)
+
+_PREFIX = re.compile(r"[a-zA-Z0-9_.-]+\Z")
+_PARAMETER_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_RESERVED_PREFIXES = frozenset({"dynamic-routes"})
 
 
-class CreateDynamicRouteRequest(BaseModel):
-    """Request body to create a new dynamic API route."""
-
+class DynamicRouteWriteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    path: str = Field(
-        ..., description="URL path for the route, e.g. '/report/daily_sales'"
-    )
-    sql: str = Field(
-        ...,
-        description="SQL query to execute. Use {param} for path param placeholders.",
-    )
-    path_params: list[str] = Field(
-        default_factory=list, description="Names of URL path parameters"
-    )
-    pii_columns: list[str] = Field(
-        default_factory=list,
-        description="Column names that require PII transformation",
-    )
-    description: str = Field(default="", description="Description of this route")
-    lab_test: bool = Field(
-        default=False, description="If True, execute SQL immediately as a lab test"
-    )
-    lab_test_params: dict[str, str] = Field(
-        default_factory=dict,
-        description="Parameter values for lab test execution",
-    )
+    prefix: str = Field(min_length=3, max_length=50)
+    path: str = Field(min_length=1, max_length=500)
+    sql: str = Field(min_length=1)
+    params: dict[str, DynamicParameterDefinition] = Field(default_factory=dict)
+    description: str = ""
+    lab_test: bool = False
+    lab_test_params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("prefix", mode="before")
+    @classmethod
+    def normalize_prefix(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("prefix")
+    @classmethod
+    def validate_prefix(cls, value: str) -> str:
+        if not _PREFIX.fullmatch(value):
+            raise ValueError("prefix contains unsupported characters")
+        if value in _RESERVED_PREFIXES:
+            raise ValueError("prefix is reserved")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("path cannot start or end with whitespace")
+        if value.startswith("/") or value.endswith("/"):
+            raise ValueError("path must be relative")
+        segments = value.split("/")
+        if any(not segment or segment in {".", ".."} for segment in segments):
+            raise ValueError("path contains an invalid segment")
+        return value
+
+    @field_validator("params")
+    @classmethod
+    def validate_parameter_names(
+        cls,
+        value: dict[str, DynamicParameterDefinition],
+    ) -> dict[str, DynamicParameterDefinition]:
+        if any(not _PARAMETER_NAME.fullmatch(name) for name in value):
+            raise ValueError("parameter names must be ASCII identifiers")
+        return value
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def api_path(self) -> str:
+        return f"/{self.prefix}/{self.path}"
 
 
 class DynamicRouteResponse(BaseModel):
-    """Response for a created dynamic route."""
+    model_config = ConfigDict(from_attributes=True)
 
+    id: UUID
+    prefix: str
     path: str
-    sql: str
-    path_params: list[str]
-    pii_columns: list[str]
     description: str
+    sql: str
+    canonical_sql: str
+    params: dict[str, DynamicParameterDefinition]
+    created_by: UUID | None
+    updated_by: UUID | None
     created_at: datetime
-    lab_test_result: list[dict[str, Any]] | None = None
+    updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def api_path(self) -> str:
+        return f"/{self.prefix}/{self.path}"
 
 
 class DynamicRouteListResponse(BaseModel):
-    """Response listing all dynamic routes."""
-
     routes: list[DynamicRouteResponse]
     total: int
