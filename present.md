@@ -12,6 +12,8 @@ Dynamic API cho phép admin/data engineer nội bộ định nghĩa query, nhưn
 - Chặn DDL, DML, command và multi-statement.
 - Không cho query parameter làm thay đổi cấu trúc SQL.
 - Không dùng string replacement để chèn giá trị vào SQL.
+- User thường chỉ execute Dynamic Route có `prefix` khớp exact username.
+- Tạm thời không hỗ trợ PII mapping cho Dynamic API.
 - Có Trino credential read-only làm lớp bảo vệ cuối.
 
 ## 2. Luồng kiểm tra
@@ -327,6 +329,32 @@ Mỗi `path` có một row hiện hành duy nhất. `PUT` ghi đè row đó, cò
 hard delete. `lab_test_result` chỉ tồn tại trong response của request lab test và
 không được lưu trong database.
 
+Table `dynamic_routes` có `prefix` làm namespace authorization và không có
+`pii_columns`. Dynamic API không inject/call `PiiMapper`;
+`missing_mappings` luôn là danh sách rỗng.
+
+### Prefix authorization
+
+`prefix` phải khớp segment đầu tiên của `path`:
+
+```json
+{
+  "path": "power_bi/customer-sales",
+  "prefix": "power_bi"
+}
+```
+
+Rule execution:
+
+- Admin gọi được mọi prefix.
+- User thường chỉ gọi được khi `route.prefix == current_user.username`.
+- So sánh exact sau khi normalize lowercase.
+- User `power_bi` không gọi được prefix `power_bi_extra`.
+
+URL thật có segment đầu là `dynamic-routes`, nên execute endpoint phải load route
+từ database, lấy persisted prefix rồi áp dụng permission check. SQL chưa được
+validate hoặc execute trước khi authorization thành công.
+
 Pipeline:
 
 ```text
@@ -365,7 +393,8 @@ Rủi ro còn lại được chấp nhận:
 
 ```json
 {
-  "path": "reports/customer-sales",
+  "path": "power_bi/customer-sales",
+  "prefix": "power_bi",
   "description": "Sales grouped by customer",
   "sql": "WITH filtered AS (SELECT customer_id, amount FROM hive.analytics.sales WHERE region = :region AND sale_date >= :start_date) SELECT customer_id, sum(amount) AS total_amount FROM filtered GROUP BY customer_id",
   "params": {
@@ -378,7 +407,6 @@ Rủi ro còn lại được chấp nhận:
       "required": true
     }
   },
-  "pii_columns": ["customer_id"],
   "lab_test": true,
   "lab_test_params": {
     "region": "APAC",
@@ -390,12 +418,15 @@ Rủi ro còn lại được chấp nhận:
 ### Execute Dynamic Route
 
 ```http
-GET /api/v1/dynamic-routes/reports/customer-sales?region=APAC&start_date=2026-07-01
+GET /api/v1/dynamic-routes/power_bi/customer-sales?region=APAC&start_date=2026-07-01
 Authorization: Bearer <access_token>
 ```
 
 Các giá trị `APAC` và `2026-07-01` được bind riêng. Chúng không được nối vào
 SQL string.
+
+Admin gọi được route này. User thường phải có username `power_bi`; username
+khác nhận HTTP `403`.
 
 ## 14. Kết luận
 
