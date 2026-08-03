@@ -1,15 +1,17 @@
 import asyncio
 
 from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.dependencies.database import get_unit_of_work
+from app.dependencies.database import get_db_session, get_unit_of_work
 from app.dependencies.repositories import (
     get_audit_log_repository,
     get_dynamic_route_repository,
     get_user_repository,
 )
+from app.infrastructure.database.client import PostgresClient, SQLAlchemyPostgresClient
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.pii_database.session import PiiAsyncSessionFactory
 from app.infrastructure.trino.client import TrinoClient, TrinoPythonClient
@@ -63,6 +65,12 @@ def get_trino_client(
     if _trino_client is None:
         _trino_client = TrinoPythonClient(settings=settings)
     return _trino_client
+
+
+def get_postgres_client(
+    session: AsyncSession = Depends(get_db_session),
+) -> PostgresClient:
+    return SQLAlchemyPostgresClient(session)
 
 
 async def close_trino_client() -> None:
@@ -177,10 +185,14 @@ def get_dynamic_route_service(
     routes: DynamicRouteRepository = Depends(get_dynamic_route_repository),
     uow: UnitOfWork = Depends(get_unit_of_work),
     trino: TrinoClient = Depends(get_trino_client),
+    postgres: PostgresClient = Depends(get_postgres_client),
+    pii_mapper: PiiMapper = Depends(get_pii_mapper),
 ) -> DynamicRouteService:
     return DynamicRouteService(
         routes=routes,
         uow=uow,
         trino=trino,
+        postgres=postgres,
+        pii_mapper=pii_mapper,
         sql_validator=SqlSafetyValidator(),
     )

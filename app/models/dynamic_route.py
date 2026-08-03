@@ -1,8 +1,10 @@
 import uuid
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
+    Enum,
     ForeignKey,
     Index,
     String,
@@ -14,6 +16,21 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, BaseModelMixin
+
+
+class DynamicRouteDatabaseType(StrEnum):
+    trino = "trino"
+    postgres = "postgres"
+
+
+class DynamicRoutePiiType(StrEnum):
+    account_id = "account_id"
+    customer_id = "customer_id"
+
+
+class DynamicRouteResponseType(StrEnum):
+    paginated = "paginated"
+    data = "data"
 
 
 class DynamicRoute(BaseModelMixin, Base):
@@ -60,6 +77,23 @@ class DynamicRoute(BaseModelMixin, Base):
         nullable=False,
         default=dict,
         server_default=text("'{}'::jsonb"),
+    )
+    db_type: Mapped[DynamicRouteDatabaseType] = mapped_column(
+        Enum(DynamicRouteDatabaseType, name="dynamic_route_db_type"),
+        nullable=False,
+        default=DynamicRouteDatabaseType.trino,
+        server_default=DynamicRouteDatabaseType.trino.value,
+    )
+    pii_type: Mapped[DynamicRoutePiiType | None] = mapped_column(
+        Enum(DynamicRoutePiiType, name="dynamic_route_pii_type"),
+        nullable=True,
+        default=None,
+    )
+    response_type: Mapped[DynamicRouteResponseType] = mapped_column(
+        Enum(DynamicRouteResponseType, name="dynamic_route_response_type"),
+        nullable=False,
+        default=DynamicRouteResponseType.data,
+        server_default=DynamicRouteResponseType.data.value,
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

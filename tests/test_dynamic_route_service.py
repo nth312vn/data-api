@@ -8,11 +8,18 @@ from starlette.datastructures import QueryParams
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.infrastructure.trino.client import TrinoClient
-from app.models.dynamic_route import DynamicRoute
+from app.models.dynamic_route import (
+    DynamicRoute,
+    DynamicRouteDatabaseType,
+    DynamicRoutePiiType,
+    DynamicRouteResponseType,
+)
 from app.models.user import User, UserRole
 from app.repositories.interfaces.dynamic_route import DynamicRouteRepository
 from app.schemas.dynamic_route import DynamicRouteWriteRequest
+from app.services.account_map_in_memory import AccountMapInMemory
 from app.services.query_engine.dynamic_routes import DynamicRouteService
+from app.services.query_engine.pii_mapper import PiiMapper
 from app.services.query_engine.sql_safety import DynamicSqlError, SqlSafetyValidator
 
 
@@ -71,8 +78,13 @@ class RecordingUnitOfWork:
 
 
 class RecordingTrino:
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        error: Exception | None = None,
+        results: list[list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.error = error
+        self.results = list(results or [])
         self.executions: list[tuple[str, Mapping[str, object] | None]] = []
 
     async def execute(
@@ -83,6 +95,8 @@ class RecordingTrino:
         self.executions.append((str(statement), parameters))
         if self.error is not None:
             raise self.error
+        if self.results:
+            return self.results.pop(0)
         return [{"ok": True}]
 
     async def get_catalogs(self) -> list[str]:
@@ -119,6 +133,9 @@ def make_payload(
     prefix: str = "power_bi",
     path: str = "customer-sales",
     lab_test: bool = False,
+    db_type: DynamicRouteDatabaseType = DynamicRouteDatabaseType.trino,
+    pii_type: DynamicRoutePiiType | None = None,
+    response_type: DynamicRouteResponseType = DynamicRouteResponseType.data,
 ) -> DynamicRouteWriteRequest:
     return DynamicRouteWriteRequest(
         prefix=prefix,
@@ -126,6 +143,9 @@ def make_payload(
         description="Customer sales",
         sql=("SELECT customer_id FROM sales " "WHERE region = :region /* remove me */"),
         params={"region": {"type": "string"}},
+        db_type=db_type,
+        pii_type=pii_type,
+        response_type=response_type,
         lab_test=lab_test,
         lab_test_params={"region": "APAC"} if lab_test else {},
     )
@@ -135,11 +155,16 @@ def make_service(
     repository: MemoryRouteRepository,
     uow: RecordingUnitOfWork,
     trino: RecordingTrino,
+    *,
+    postgres: RecordingTrino | None = None,
+    pii_mapper: PiiMapper | None = None,
 ) -> DynamicRouteService:
     return DynamicRouteService(
         routes=repository,
         uow=uow,
         trino=trino,
+        postgres=postgres,
+        pii_mapper=pii_mapper,
         sql_validator=SqlSafetyValidator(),
     )
 
@@ -266,7 +291,7 @@ async def test_execute_revalidates_database_sql_and_binds_injection_payload() ->
         raw_params=QueryParams({"region": payload}),
     )
 
-    assert rows == [{"ok": True}]
+    assert rows.rows == [{"ok": True}]
     statement, parameters = trino.executions[0]
     assert payload not in statement
     assert parameters == {"region": payload}
@@ -301,7 +326,108 @@ async def test_execute_uses_repository_as_source_of_truth_across_services() -> N
         raw_params=QueryParams({"region": "APAC"}),
     )
 
-    assert rows == [{"ok": True}]
+    assert rows.rows == [{"ok": True}]
+
+
+@pytest.mark.asyncio
+async def test_postgres_route_uses_postgres_for_lab_test_and_execution() -> None:
+    repository = MemoryRouteRepository()
+    trino = RecordingTrino()
+    postgres = RecordingTrino()
+    service = make_service(
+        repository,
+        RecordingUnitOfWork(),
+        trino,
+        postgres=postgres,
+    )
+    route = await service.create_route(
+        payload=make_payload(
+            db_type=DynamicRouteDatabaseType.postgres,
+            lab_test=True,
+        ),
+        actor=make_actor(),
+    )
+
+    response = await service.execute_route(
+        prefix=route.prefix,
+        path=route.path,
+        raw_params=QueryParams({"region": "APAC"}),
+    )
+
+    assert trino.executions == []
+    assert len(postgres.executions) == 2
+    assert response.rows == [{"ok": True}]
+    assert route.db_type is DynamicRouteDatabaseType.postgres
+
+
+@pytest.mark.asyncio
+async def test_execute_maps_configured_pii_column() -> None:
+    token = "a" * 32
+    cache = AccountMapInMemory()
+    cache.hashmap_token_to_value[token] = "customer-uuid"
+    repository = MemoryRouteRepository()
+    trino = RecordingTrino(results=[[{"customer_id": token}]])
+    service = make_service(
+        repository,
+        RecordingUnitOfWork(),
+        trino,
+        pii_mapper=PiiMapper(mapping_cache=cache),
+    )
+    await service.create_route(
+        payload=make_payload(pii_type=DynamicRoutePiiType.customer_id),
+        actor=make_actor(),
+    )
+
+    response = await service.execute_route(
+        prefix="power_bi",
+        path="customer-sales",
+        raw_params=QueryParams({"region": "APAC"}),
+    )
+
+    assert response.rows == [{"customer_id": "customer-uuid"}]
+    assert response.missing_mappings == []
+
+
+@pytest.mark.asyncio
+async def test_paginated_response_runs_count_and_limited_query() -> None:
+    repository = MemoryRouteRepository()
+    trino = RecordingTrino(
+        results=[
+            [{"total": 51}],
+            [{"customer_id": "customer-26"}],
+        ]
+    )
+    service = make_service(repository, RecordingUnitOfWork(), trino)
+    await service.create_route(
+        payload=make_payload(response_type=DynamicRouteResponseType.paginated),
+        actor=make_actor(),
+    )
+
+    response = await service.execute_route(
+        prefix="power_bi",
+        path="customer-sales",
+        raw_params=QueryParams(
+            {"region": "APAC", "page": "2", "page_size": "25"}
+        ),
+    )
+
+    assert response.data == [{"customer_id": "customer-26"}]
+    assert response.pagination.model_dump() == {
+        "total": 51,
+        "page": 2,
+        "page_size": 25,
+        "total_pages": 3,
+    }
+    assert len(trino.executions) == 2
+    assert "COUNT(*) AS total" in trino.executions[0][0]
+    assert "LIMIT :__dynamic_page_size OFFSET :__dynamic_offset" in (
+        trino.executions[1][0]
+    )
+    assert trino.executions[1][1] == {
+        "region": "APAC",
+        "__dynamic_page_size": 25,
+        "__dynamic_offset": 25,
+    }
 
 
 def test_service_constructor_requires_repository_not_registry_or_pii_mapper() -> None:

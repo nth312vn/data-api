@@ -5,7 +5,11 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.dynamic_route import DynamicRoute
+from app.models.dynamic_route import (
+    DynamicRoute,
+    DynamicRouteDatabaseType,
+    DynamicRouteResponseType,
+)
 from app.repositories.sqlalchemy.dynamic_route import SQLAlchemyDynamicRouteRepository
 
 
@@ -21,6 +25,9 @@ def make_route() -> DynamicRoute:
         parameter_definitions={
             "region": {"type": "string", "required": True, "description": ""}
         },
+        db_type=DynamicRouteDatabaseType.trino,
+        pii_type=None,
+        response_type=DynamicRouteResponseType.data,
         created_by=None,
         updated_by=None,
         created_at=now,
@@ -44,6 +51,9 @@ def test_dynamic_route_model_has_persistence_and_security_constraints() -> None:
         "ix_dynamic_routes_updated_at",
     } <= index_names
     assert table.c.parameter_definitions.type.__class__.__name__ == "JSONB"
+    assert table.c.db_type.type.name == "dynamic_route_db_type"
+    assert table.c.pii_type.type.name == "dynamic_route_pii_type"
+    assert table.c.response_type.type.name == "dynamic_route_response_type"
     assert next(iter(table.c.created_by.foreign_keys)).ondelete == "SET NULL"
 
 

@@ -11,8 +11,13 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.repositories import get_audit_log_repository
 from app.dependencies.services import get_dynamic_route_service
-from app.models.dynamic_route import DynamicRoute
+from app.models.dynamic_route import (
+    DynamicRoute,
+    DynamicRouteDatabaseType,
+    DynamicRouteResponseType,
+)
 from app.models.user import User, UserRole
+from app.schemas.common import DataRowsResponse
 from app.services.query_engine.sql_safety import DynamicSqlError
 
 
@@ -79,9 +84,9 @@ class RecordingDynamicRouteService:
         prefix: str,
         path: str,
         raw_params: Any,
-    ) -> list[dict[str, Any]]:
+    ) -> DataRowsResponse:
         self.executions.append((prefix, path, raw_params))
-        return [{"customer_id": "customer-1"}]
+        return DataRowsResponse(rows=[{"customer_id": "customer-1"}])
 
 
 def make_route() -> DynamicRoute:
@@ -101,6 +106,9 @@ def make_route() -> DynamicRoute:
                 "description": "",
             }
         },
+        db_type=DynamicRouteDatabaseType.trino,
+        pii_type=None,
+        response_type=DynamicRouteResponseType.data,
         created_by=None,
         updated_by=None,
         created_at=now,
@@ -196,7 +204,9 @@ def test_admin_can_manage_routes_by_uuid_without_pii_fields() -> None:
     assert updated.status_code == 200
     assert deleted.status_code == 204
     assert created.json()["api_path"] == "/power_bi/customer-sales"
-    assert "pii_columns" not in created.json()
+    assert created.json()["db_type"] == "trino"
+    assert created.json()["pii_type"] is None
+    assert created.json()["response_type"] == "data"
     assert "lab_test_result" not in created.json()
     management_entries = [
         entry

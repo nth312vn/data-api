@@ -55,9 +55,9 @@ class ValidatedSql:
 
 
 class SqlSafetyValidator:
-    """Parse dynamic SQL with the Trino grammar and allow only one SELECT."""
+    """Parse dynamic SQL with the selected grammar and allow only one SELECT."""
 
-    def validate(self, sql: str) -> ValidatedSql:
+    def validate(self, sql: str, *, dialect: str = "trino") -> ValidatedSql:
         _validate_characters(sql)
         if not sql.strip():
             raise DynamicSqlError(
@@ -68,7 +68,7 @@ class SqlSafetyValidator:
         try:
             statements = sqlglot.parse(
                 sql,
-                read="trino",
+                read=dialect,
                 error_level=ErrorLevel.RAISE,
             )
         except ParseError as exc:
@@ -79,12 +79,12 @@ class SqlSafetyValidator:
                 ) from exc
             raise DynamicSqlError(
                 "dynamic_sql_invalid",
-                "SQL is not valid Trino SQL",
+                f"SQL is not valid {dialect} SQL",
             ) from exc
         except SqlglotError as exc:
             raise DynamicSqlError(
                 "dynamic_sql_invalid",
-                "SQL is not valid Trino SQL",
+                f"SQL is not valid {dialect} SQL",
             ) from exc
 
         if len(statements) != 1 or statements[0] is None:
@@ -95,8 +95,14 @@ class SqlSafetyValidator:
 
         expression = cast(exp.Expression, statements[0])
         _validate_select_tree(expression)
-        canonical_sql = expression.sql(dialect="trino", comments=False)
-        reparsed = _parse_canonical_sql(canonical_sql)
+        canonical_sql = expression.sql(dialect=dialect, comments=False)
+        if dialect == "postgres":
+            canonical_sql = re.sub(
+                r"%\(([A-Za-z_][A-Za-z0-9_]*)\)s",
+                r":\1",
+                canonical_sql,
+            )
+        reparsed = _parse_canonical_sql(canonical_sql, dialect=dialect)
         _validate_select_tree(reparsed)
 
         parameter_names: set[str] = set()
@@ -139,11 +145,15 @@ def _validate_select_tree(expression: exp.Expression) -> None:
         )
 
 
-def _parse_canonical_sql(canonical_sql: str) -> exp.Expression:
+def _parse_canonical_sql(
+    canonical_sql: str,
+    *,
+    dialect: str,
+) -> exp.Expression:
     try:
         expression = sqlglot.parse_one(
             canonical_sql,
-            read="trino",
+            read=dialect,
             error_level=ErrorLevel.RAISE,
         )
     except SqlglotError as exc:

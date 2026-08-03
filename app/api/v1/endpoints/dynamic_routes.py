@@ -165,6 +165,9 @@ def _route_to_response(route: DynamicRoute) -> DynamicRouteResponse:
             name: DynamicParameterDefinition.model_validate(definition)
             for name, definition in route.parameter_definitions.items()
         },
+        db_type=route.db_type,
+        pii_type=route.pii_type,
+        response_type=route.response_type,
         created_by=route.created_by,
         updated_by=route.updated_by,
         created_at=route.created_at,

@@ -11,8 +11,14 @@ from pydantic import (
     Field,
     computed_field,
     field_validator,
+    model_validator,
 )
 
+from app.models.dynamic_route import (
+    DynamicRouteDatabaseType,
+    DynamicRoutePiiType,
+    DynamicRouteResponseType,
+)
 from app.services.query_engine.dynamic_parameters import (
     DynamicParameterDefinition,
 )
@@ -20,6 +26,9 @@ from app.services.query_engine.dynamic_parameters import (
 _PREFIX = re.compile(r"[a-zA-Z0-9_.-]+\Z")
 _PARAMETER_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _RESERVED_PREFIXES = frozenset({"dynamic-routes"})
+_PAGINATION_PARAMETERS = frozenset(
+    {"page", "page_size", "__dynamic_page_size", "__dynamic_offset"}
+)
 
 
 class DynamicRouteWriteRequest(BaseModel):
@@ -30,6 +39,9 @@ class DynamicRouteWriteRequest(BaseModel):
     sql: str = Field(min_length=1)
     params: dict[str, DynamicParameterDefinition] = Field(default_factory=dict)
     description: str = ""
+    db_type: DynamicRouteDatabaseType = DynamicRouteDatabaseType.trino
+    pii_type: DynamicRoutePiiType | None = None
+    response_type: DynamicRouteResponseType = DynamicRouteResponseType.data
     lab_test: bool = False
     lab_test_params: dict[str, Any] = Field(default_factory=dict)
 
@@ -69,6 +81,16 @@ class DynamicRouteWriteRequest(BaseModel):
             raise ValueError("parameter names must be ASCII identifiers")
         return value
 
+    @model_validator(mode="after")
+    def validate_paginated_parameter_names(self) -> DynamicRouteWriteRequest:
+        if self.response_type is DynamicRouteResponseType.paginated:
+            reserved = sorted(_PAGINATION_PARAMETERS & self.params.keys())
+            if reserved:
+                raise ValueError(
+                    "paginated route uses a reserved pagination parameter"
+                )
+        return self
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def api_path(self) -> str:
@@ -85,6 +107,9 @@ class DynamicRouteResponse(BaseModel):
     sql: str
     canonical_sql: str
     params: dict[str, DynamicParameterDefinition]
+    db_type: DynamicRouteDatabaseType
+    pii_type: DynamicRoutePiiType | None
+    response_type: DynamicRouteResponseType
     created_by: UUID | None
     updated_by: UUID | None
     created_at: datetime

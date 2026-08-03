@@ -44,6 +44,17 @@ def test_validator_removes_comments_from_canonical_sql() -> None:
     assert "ticket" not in result.canonical_sql
 
 
+def test_validator_uses_postgres_dialect_and_keeps_named_bind_parameters() -> None:
+    result = SqlSafetyValidator().validate(
+        "SELECT payload->>'name' FROM events WHERE id = :event_id",
+        dialect="postgres",
+    )
+
+    assert result.parameter_names == frozenset({"event_id"})
+    assert ":event_id" in result.canonical_sql
+    assert "%(event_id)s" not in result.canonical_sql
+
+
 @pytest.mark.parametrize(
     "sql",
     [
