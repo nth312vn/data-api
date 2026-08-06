@@ -482,7 +482,7 @@ sequenceDiagram
         A->>P: SELECT api_key JOIN users
         P-->>A: Key + current User hoặc null
         A->>A: Verify HMAC + active state
-        A->>R: SET cache entry với TTL
+        A->>R: Conditional SET theo state_version với TTL
     end
     A->>A: check_api_permission(current User, route)
     alt Allowed
@@ -525,11 +525,17 @@ async def authenticate_api_key(presented_key: str) -> AuthenticatedPrincipal:
 
     verify_secret(parsed, record.secret_digest)
 
-    cache_result = await cache.put_state_if_version_not_older(active_from(record))
-    if cache_result.current_status != "active":
-        raise AuthenticationError("Invalid authentication credentials")
+    try:
+        cache_result = await cache.put_state_if_version_not_older(
+            active_from(record),
+        )
+        if cache_result.rejected_by_newer_state:
+            raise AuthenticationError("Invalid authentication credentials")
+        return principal_from_cache(cache_result.current_entry)
+    except CacheUnavailableError:
+        # Redis là cache; record vừa được verify trực tiếp từ source of truth.
+        return principal_from_record(record)
 
-    return principal_from_cache(cache_result.current_entry)
 ```
 
 Mọi lỗi unknown key, wrong secret, revoked, expired hoặc deleted user đều trả cùng
@@ -610,8 +616,8 @@ Trình tự:
 4. Sinh `key_id` và secret bằng CSPRNG.
 5. Tính HMAC digest.
 6. Insert PostgreSQL và commit.
-7. Warm active entry trong Redis. Nếu Redis lỗi, vẫn trả thành công vì cache miss
-   request đầu tiên sẽ đọc PostgreSQL.
+7. Warm active entry trong Redis bằng conditional version write. Nếu Redis lỗi,
+   vẫn trả thành công vì cache miss request đầu tiên sẽ đọc PostgreSQL.
 8. Trả full key đúng một lần.
 
 ## 14. Luồng revoke
@@ -717,10 +723,12 @@ nào đã thực hiện request.
 
 Khi admin thay đổi `username`, `role` hoặc xóa user:
 
-1. Commit thay đổi PostgreSQL.
-2. Đọc `data-api:auth:v1:user-keys:<user_id>`.
-3. `DEL` active cache của từng key hoặc ghi tombstone nếu user bị xóa.
-4. Xóa user-to-key set.
+1. Nếu xóa user, revoke các key active và tăng `state_version` trong cùng luồng
+   nghiệp vụ trước khi xóa user.
+2. Commit thay đổi PostgreSQL.
+3. Đọc `data-api:auth:v1:user-keys:<user_id>`.
+4. `DEL` active cache của từng key hoặc ghi versioned tombstone nếu user bị xóa.
+5. Xóa user-to-key set.
 
 Nếu invalidate Redis thất bại, user snapshot cũ tồn tại tối đa active TTL.
 
@@ -849,7 +857,7 @@ API_KEY_LAST_USED_DEBOUNCE_SECONDS=900
 Dependency Python đề xuất:
 
 ```toml
-"redis>=5.0,<6.0"
+"redis>=5.0"
 ```
 
 Sử dụng `redis.asyncio` và connection pool dùng chung toàn application. Khởi tạo
